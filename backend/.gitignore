@@ -1,0 +1,19 @@
+# Secrets
+.env
+**/.env
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Android
+.gradle/
+**/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Kotlin
+.kotlin/
