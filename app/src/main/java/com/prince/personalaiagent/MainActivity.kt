@@ -1,14 +1,16 @@
-
+﻿
 package com.prince.personalaiagent
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -17,17 +19,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.prince.personalaiagent.data.remote.ChatApiClient
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import dev.jeziellago.compose.markdowntext.MarkdownText
+import kotlinx.coroutines.flow.first
 
 data class ChatMessage(
+    val id: Int,
     val text: String,
     val isUser: Boolean
 )
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -49,101 +53,53 @@ fun AgentScreen() {
     val messages = remember {
         mutableStateListOf(
             ChatMessage(
-                "Hello! I'm your Personal AI Agent. How can I help you today?",
-                false
+                id = 0,
+                text = "Hello! I'm your Personal AI Agent. How can I help you today?",
+                isUser = false
             )
         )
     }
 
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size, isLoading) {
-        val lastIndex = if (isLoading) {
-            messages.size
-        } else {
-            messages.lastIndex
-        }
-
-        if (lastIndex >= 0) {
-            listState.animateScrollToItem(lastIndex)
-        }
-    }
-
     fun sendMessage() {
+
         val userMessage = input.trim()
 
         if (userMessage.isBlank() || isLoading) return
 
-        messages.add(ChatMessage(userMessage, true))
+        val userId = (messages.maxOfOrNull { it.id } ?: 0) + 1
+
+        messages.add(
+            ChatMessage(
+                id = userId,
+                text = userMessage,
+                isUser = true
+            )
+        )
+
         input = ""
         isLoading = true
 
-        // Run the network request on a background thread.
         Thread {
-            var result: String
+            val result = try {
+                ChatApiClient().sendMessage(userMessage)
+            } catch (e: Exception) {
+                "Connection error: ${e.message ?: "Please try again."}"
+            }
 
-            try {
-                val url = URL("http://10.0.2.2:3000/api/chat")
-                val connection = url.openConnection() as HttpURLConnection
+            Handler(Looper.getMainLooper()).post {
 
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 15000
-                connection.readTimeout = 60000
-                connection.doOutput = true
-                connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json"
+                messages.add(
+                    ChatMessage(
+                        id = userId + 1,
+                        text = result,
+                        isUser = false
+                    )
                 )
 
-                val requestBody = JSONObject()
-                    .put("message", userMessage)
-                    .toString()
-
-                connection.outputStream.use { output ->
-                    output.write(requestBody.toByteArray(Charsets.UTF_8))
-                }
-
-                val responseCode = connection.responseCode
-
-                val responseStream = if (responseCode in 200..299) {
-                    connection.inputStream
-                } else {
-                    connection.errorStream
-                }
-
-                val responseText = responseStream
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    ?: ""
-
-                val json = JSONObject(responseText)
-
-                result = if (responseCode in 200..299) {
-                    json.optString(
-                        "reply",
-                        "The AI returned an empty response."
-                    )
-                } else {
-                    json.optString(
-                        "error",
-                        "Server error. Please try again."
-                    )
-                }
-
-                connection.disconnect()
-
-            } catch (e: Exception) {
-                result = "Connection error: ${e.message ?: "Please try again."}"
-            }
-
-            // Update Compose state on the main UI thread.
-            android.os.Handler(
-                android.os.Looper.getMainLooper()
-            ).post {
-                messages.add(ChatMessage(result, false))
                 isLoading = false
             }
-
         }.start()
     }
 
@@ -161,52 +117,19 @@ fun AgentScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(12.dp)
         ) {
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            ChatMessageList(
+                messages = messages,
+                isLoading = isLoading,
+                listState = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
 
-                items(messages) { message ->
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (message.isUser) {
-                            Arrangement.End
-                        } else {
-                            Arrangement.Start
-                        }
-                    ) {
-
-                        Surface(
-                            color = if (message.isUser) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.secondaryContainer
-                            },
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-
-                            Text(
-                                text = message.text,
-                                modifier = Modifier.padding(14.dp)
-                            )
-                        }
-                    }
-                }
-
-                if (isLoading) {
-                    item {
-                        Text(
-                            text = "Thinking...",
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                    }
-                }
-            }
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -235,11 +158,76 @@ fun AgentScreen() {
 
                 IconButton(
                     onClick = {
-                        // Voice input will be implemented next.
+                        // Voice input will be implemented later.
                     }
                 ) {
-                    Text("🎙")
+                    Text("🎙️")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ChatMessageList(
+    messages: List<ChatMessage>,
+    isLoading: Boolean,
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    LaunchedEffect(messages.size, isLoading) {
+        val lastIndex = if (isLoading) messages.size else messages.lastIndex
+        if (lastIndex >= 0) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }
+                .first { itemCount -> itemCount > lastIndex }
+            listState.animateScrollToItem(lastIndex)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(vertical = 8.dp)
+    ) {
+        items(
+            items = messages,
+            key = { message -> message.id }
+        ) { message ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = if (message.isUser) {
+                    Arrangement.End
+                } else {
+                    Arrangement.Start
+                }
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(0.90f),
+                    color = if (message.isUser) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    MarkdownText(
+                        markdown = message.text,
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        wrapMultilineTextWidth = true
+                    )
+                }
+            }
+        }
+
+        if (isLoading) {
+            item(key = "loading") {
+                Text(
+                    text = "Thinking...",
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(8.dp)
+                )
             }
         }
     }
