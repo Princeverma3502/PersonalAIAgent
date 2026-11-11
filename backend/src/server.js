@@ -6,6 +6,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
+const { runAgentTurn } = require("./agent/agentService");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -110,6 +111,42 @@ app.post("/api/chat", async (req, res) => {
         success: false,
         error: "All available AI models are currently busy or unavailable. Please try again shortly."
     });
+});
+
+app.post("/api/agent", async (req, res) => {
+    const { message } = req.body;
+
+    if (
+        typeof message !== "string" ||
+        !message.trim() ||
+        message.length > 4000
+    ) {
+        return res.status(400).json({
+            success: false,
+            reply: "Please provide a valid message (maximum 4000 characters).",
+            status: "failed",
+            toolCall: null
+        });
+    }
+
+    try {
+        const result = await runAgentTurn({
+            ai,
+            message,
+            modelList: AI_MODELS
+        });
+
+        return res.status(result.success ? 200 : 502).json(result);
+    } catch (error) {
+        console.error("Agent endpoint failed:", error?.message || "Unknown agent error");
+
+        return res.status(502).json({
+            success: false,
+            reply: "The AI service is currently unavailable. Please try again shortly.",
+            status: "failed",
+            toolCall: null
+        });
+    }
 });
 
 
