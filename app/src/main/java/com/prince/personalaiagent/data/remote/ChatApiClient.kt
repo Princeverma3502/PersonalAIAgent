@@ -8,7 +8,7 @@ import java.net.URL
 class ChatApiClient {
 
     companion object {
-        private const val BASE_URL = "http://10.0.2.2:3000/api/chat"
+        private const val BASE_URL = "http://10.0.2.2:3000/api/agent"
         private const val CONNECT_TIMEOUT = 15000
         private const val READ_TIMEOUT = 60000
     }
@@ -53,7 +53,7 @@ class ChatApiClient {
             if (responseCode !in 200..299) {
                 throw IOException(
                     json.optString(
-                        "error",
+                        "reply",
                         "Server error. Please try again."
                     )
                 )
