@@ -5,6 +5,16 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class AgentResponse(
+    val reply: String,
+    val status: String,
+    val toolName: String?
+)
+
+class AgentApiException(
+    val response: AgentResponse
+) : IOException(response.reply)
+
 class ChatApiClient {
 
     companion object {
@@ -13,7 +23,7 @@ class ChatApiClient {
         private const val READ_TIMEOUT = 60000
     }
 
-    fun sendMessage(message: String): String {
+    fun sendMessage(message: String): AgentResponse {
         val connection = URL(BASE_URL).openConnection() as HttpURLConnection
 
         try {
@@ -50,19 +60,28 @@ class ChatApiClient {
 
             val json = JSONObject(responseText)
 
+            val toolCall = json.optJSONObject("toolCall")
+            val toolName = toolCall?.optString("name")?.takeIf {
+                it.isNotBlank() && it != "null"
+            }
+            val status = toolCall?.optString("status")?.takeIf {
+                it.isNotBlank() && it != "null"
+            } ?: json.optString("status", "unknown")
+
+            val agentResponse = AgentResponse(
+                reply = json.optString(
+                    "reply",
+                    "The AI returned an empty response."
+                ),
+                status = status,
+                toolName = toolName
+            )
+
             if (responseCode !in 200..299) {
-                throw IOException(
-                    json.optString(
-                        "reply",
-                        "Server error. Please try again."
-                    )
-                )
+                throw AgentApiException(agentResponse)
             }
 
-            return json.optString(
-                "reply",
-                "The AI returned an empty response."
-            )
+            return agentResponse
 
         } finally {
             connection.disconnect()

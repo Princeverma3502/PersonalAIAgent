@@ -1,5 +1,4 @@
-﻿
-package com.prince.personalaiagent
+﻿package com.prince.personalaiagent
 
 import android.os.Bundle
 import android.os.Handler
@@ -19,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.prince.personalaiagent.data.remote.AgentApiException
+import com.prince.personalaiagent.data.remote.AgentResponse
 import com.prince.personalaiagent.data.remote.ChatApiClient
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
 import dev.jeziellago.compose.markdowntext.MarkdownText
@@ -27,7 +28,9 @@ import kotlinx.coroutines.flow.first
 data class ChatMessage(
     val id: Int,
     val text: String,
-    val isUser: Boolean
+    val isUser: Boolean,
+    val toolName: String? = null,
+    val toolStatus: String? = null
 )
 
 class MainActivity : ComponentActivity() {
@@ -84,8 +87,18 @@ fun AgentScreen() {
         Thread {
             val result = try {
                 ChatApiClient().sendMessage(userMessage)
+            } catch (e: AgentApiException) {
+                AgentResponse(
+                    reply = "Connection error: ${e.message ?: "Please try again."}",
+                    status = e.response.status,
+                    toolName = e.response.toolName
+                )
             } catch (e: Exception) {
-                "Connection error: ${e.message ?: "Please try again."}"
+                AgentResponse(
+                    reply = "Connection error: ${e.message ?: "Please try again."}",
+                    status = "unknown",
+                    toolName = null
+                )
             }
 
             Handler(Looper.getMainLooper()).post {
@@ -93,8 +106,10 @@ fun AgentScreen() {
                 messages.add(
                     ChatMessage(
                         id = userId + 1,
-                        text = result,
-                        isUser = false
+                        text = result.reply,
+                        isUser = false,
+                        toolName = result.toolName,
+                        toolStatus = result.status
                     )
                 )
 
@@ -211,12 +226,31 @@ internal fun ChatMessageList(
                     },
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    MarkdownText(
-                        markdown = message.text,
-                        modifier = Modifier.padding(14.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        wrapMultilineTextWidth = true
-                    )
+                    Column {
+                        MarkdownText(
+                            markdown = message.text,
+                            modifier = Modifier.padding(14.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            wrapMultilineTextWidth = true
+                        )
+                        message.toolName?.let { toolName ->
+                            val executionResult = when (message.toolStatus) {
+                                "success" -> "succeeded"
+                                "failed" -> "failed"
+                                else -> "status unavailable"
+                            }
+                            Text(
+                                text = "Tool: $toolName - $executionResult",
+                                modifier = Modifier.padding(
+                                    start = 14.dp,
+                                    end = 14.dp,
+                                    bottom = 12.dp
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
                 }
             }
         }

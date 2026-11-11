@@ -2,6 +2,8 @@
 const { FunctionCallingConfigMode } = require("@google/genai");
 const { getToolDeclaration, validateToolName } = require("./tools");
 
+const GENERATE_CONTENT_TIMEOUT_MS = 15000;
+
 async function executeRegisteredTool(functionCall) {
     if (!functionCall || typeof functionCall.name !== "string") {
         return {
@@ -71,18 +73,35 @@ async function runAgentTurn({ ai, message, modelList }) {
 
     for (const model of modelList) {
         try {
-            const initialResponse = await ai.models.generateContent({
-                model,
-                contents: trimmedMessage,
-                config: {
-                    tools: [getToolDeclaration()],
-                    toolConfig: {
-                        functionCallingConfig: {
-                            mode: FunctionCallingConfigMode.AUTO
+            const abortController = new AbortController();
+            const timeoutHandle = setTimeout(
+                () => abortController.abort(),
+                GENERATE_CONTENT_TIMEOUT_MS
+            );
+            let initialResponse;
+
+            try {
+                initialResponse = await ai.models.generateContent({
+                    model,
+                    contents: trimmedMessage,
+                    config: {
+                        abortSignal: abortController.signal,
+                        tools: [getToolDeclaration()],
+                        toolConfig: {
+                            functionCallingConfig: {
+                                mode: FunctionCallingConfigMode.AUTO
+                            }
+                        },
+                        httpOptions: {
+                            retryOptions: {
+                                attempts: 1
+                            }
                         }
-                    }
-                }
-            });
+                    },
+                });
+            } finally {
+                clearTimeout(timeoutHandle);
+            }
 
             const functionCalls = Array.isArray(initialResponse.functionCalls)
                 ? initialResponse.functionCalls
@@ -138,6 +157,21 @@ async function runAgentTurn({ ai, message, modelList }) {
         } catch (error) {
             lastError = error;
 
+            if (
+                [
+                    "APIConnectionTimeoutError",
+                    "APIUserAbortError",
+                    "RequestTimeoutError",
+                    "TimeoutError",
+                    "AbortError"
+                ].includes(error?.name)
+            ) {
+                console.error(
+                    `Gemini model ${model} timed out after ${GENERATE_CONTENT_TIMEOUT_MS} ms; falling back to the next model.`
+                );
+                continue;
+            }
+
             let status = Number(error?.status);
 
             if (!status && error?.message) {
@@ -159,7 +193,7 @@ async function runAgentTurn({ ai, message, modelList }) {
             }
 
             console.error(
-                `Model ${model} failed for agent request. Status: ${status}`
+                `Model ${model} failed for agent request. Status: ${status}; falling back to the next model.`
             );
         }
     }
