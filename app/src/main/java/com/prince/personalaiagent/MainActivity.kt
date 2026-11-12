@@ -518,10 +518,10 @@ fun AgentScreen() {
                         )
                     }
 
-                    Text(
-                        text = "Voice input not implemented",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(start = 8.dp)
+                    VoiceInputControl(
+                        onTextRecognized = { recognizedText ->
+                            input = recognizedText
+                        }
                     )
                 }
             }
