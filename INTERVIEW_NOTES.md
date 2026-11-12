@@ -41,5 +41,6 @@ The scheduler serializes task records into `backend/data/scheduled-tasks.json`, 
 - The model list falls through in a fixed preferred order; quota exhaustion can still prevent a live response.
 - Retrying a failed tool call is inferred from tool name, arguments, and model round because there is no stable provider retry ID. Ambiguous multi-failure cases remain failed rather than being silently counted as success.
 - Scheduled-task storage is a simple JSON file suitable for a single local process, not concurrent distributed workers. Reminder delivery requires the Android app to be open.
+- Email support only prepares a validated, user-visible draft and explicitly does not send it. Sending would require a backend mail provider and a separate explicit confirmation flow.
 - Memory and agent UI behavior has been compiled but not interactively demonstrated on an emulator in the current validation pass.
-- Email/Gmail integration, browser retrieval, Android system notifications, authentication, and production HTTPS setup are not implemented.
+- Gmail sending/search, browser retrieval, Android system notifications, authentication, and production HTTPS setup are not implemented.

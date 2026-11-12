@@ -8,6 +8,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Runtime-permission-based speech recognition that puts recognized text in the editable chat field.
 - Local Room memory storage with save, list, search, and delete flows.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
+- Validated email draft preparation; drafts are shown for review and are never sent.
 - JSON-backed one-time reminders with create, list, cancel, execution results, and in-app delivery while the chat screen is open.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
@@ -119,7 +120,8 @@ Screenshots are not included yet.
 
 - Scheduled tasks support only an in-app reminder result. The app displays due reminders while open; it does not create Android system notifications, run a background worker, or execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
-- Gmail/email provider access and browser retrieval are not configured or implemented. The agent must not claim to send emails or inspect webpages.
+- Email is draft-only: no Gmail/OAuth provider, sending, or email search is configured. Drafts are not sent.
+- Browser webpage retrieval is not configured or implemented; the agent must not claim to inspect webpages.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
 - Local memories are included in agent requests (up to 10 entries, 500 characters each); backend logs do not include their contents.

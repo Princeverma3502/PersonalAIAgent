@@ -221,6 +221,33 @@ function getToolFailureReply(toolAttempts) {
         .join("\n");
 }
 
+function getEmailDraftReply(toolAttempts) {
+    const drafts = toolAttempts
+        .filter(attempt =>
+            attempt.name === "draft_email" &&
+            attempt.result.status === "success"
+        )
+        .map(attempt => attempt.result.result?.draft)
+        .filter(draft => draft);
+
+    if (drafts.length === 0) return null;
+
+    return drafts.map((draft, index) => {
+        const label = drafts.length > 1
+            ? `Email draft ${index + 1} prepared — NOT SENT.`
+            : "Email draft prepared — NOT SENT.";
+
+        return [
+            label,
+            `To: ${draft.to}`,
+            `Subject: ${draft.subject}`,
+            "",
+            "Message:",
+            draft.body
+        ].join("\n");
+    }).join("\n\n");
+}
+
 async function runAgentTurn({
     ai,
     message,
@@ -284,6 +311,7 @@ When a tool fails:
 - Call the required tool again when a safe correction is possible.
 - Do not claim an unsuccessful operation succeeded.
 - If the operation still cannot be completed, clearly explain the failure.
+Email capability is draft-only. A draft is never sent; do not claim that an email was sent.
 
 Continue reasoning after receiving tool results. If another tool is needed, call it.
 When all required actions are complete, give the user a concise summary.
@@ -327,13 +355,15 @@ When all required actions are complete, give the user a concise summary.
                 if (functionCalls.length === 0) {
                     const toolFailureReply =
                         getToolFailureReply(toolAttempts);
+                    const emailDraftReply =
+                        getEmailDraftReply(toolAttempts);
                     const hasFailedTool = toolFailureReply !== null;
 
                     return {
                         success: !hasFailedTool,
                         reply: hasFailedTool
                             ? `I couldn't complete the requested operation:\n${toolFailureReply}`
-                            : response.text || "Request processed.",
+                            : emailDraftReply || response.text || "Request processed.",
                         status: hasFailedTool
                             ? "failed"
                             : executedToolCalls.length > 0
@@ -443,11 +473,14 @@ When all required actions are complete, give the user a concise summary.
             if (executedToolCalls.length > 0) {
                 const toolFailureReply =
                     getToolFailureReply(toolAttempts);
+                const emailDraftReply =
+                    getEmailDraftReply(toolAttempts);
 
                 return {
                     success: toolFailureReply === null,
                     reply: toolFailureReply === null
-                        ? "The tool operation completed, but the AI could not generate a final response."
+                        ? emailDraftReply ||
+                            "The tool operation completed, but the AI could not generate a final response."
                         : `I couldn't complete the requested operation:\n${toolFailureReply}`,
                     status: toolFailureReply === null
                         ? "completed"

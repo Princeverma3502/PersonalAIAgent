@@ -32,6 +32,7 @@ The current UI and data access are directly hosted by Compose state and reposito
 - `taskScheduler.js` stores scheduled task records in `backend/data/scheduled-tasks.json`.
 
 The Gemini API key is read only by the backend from `GEMINI_API_KEY`. The Android application does not contain a Gemini key.
+Email draft preparation is a local backend tool; it does not connect to a mail provider or send messages.
 
 ## Agent execution flow
 
@@ -63,8 +64,11 @@ The registry exposes:
 - `create_scheduled_task`
 - `list_scheduled_tasks`
 - `cancel_scheduled_task`
+- `draft_email`
 
 Each tool has a schema and a local argument validator. Handlers can report failure with `success: false` or throw; both paths become failed tool calls and their error is sent back to Gemini. The response preserves the complete tool-call history and a compatibility `toolCall` field for the last call.
+
+`draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim to the user with an explicit “NOT SENT” label. There is no email provider, send tool, or search tool configured; sending is intentionally unavailable until a provider and a user-confirmation flow exist.
 
 ## Memory persistence
 

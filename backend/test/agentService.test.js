@@ -209,6 +209,59 @@ test("agent tool and provider error handling", async t => {
         assert.equal((result.reply.match(/Pending task not found/g) || []).length, 2);
     });
 
+    await t.test("shows a validated email draft verbatim and makes clear it was not sent", async () => {
+        const draft = {
+            to: "person@example.com",
+            subject: "Project update",
+            body: "Hello,\n\nHere is the update."
+        };
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "draft_email",
+                args: draft
+            }]),
+            { text: "The email was sent successfully." }
+        ]);
+
+        const result = await runAgent(ai);
+
+        assert.equal(result.success, true);
+        assert.equal(result.toolCalls[0].status, "success");
+        assert.deepEqual(result.toolCalls[0].result.draft, draft);
+        assert.match(result.reply, /Email draft prepared — NOT SENT\./);
+        assert.match(result.reply, /To: person@example\.com/);
+        assert.match(result.reply, /Subject: Project update/);
+        assert.match(result.reply, /Hello,\n\nHere is the update\./);
+        assert.doesNotMatch(result.reply, /email was sent successfully/i);
+    });
+
+    await t.test("rejects malformed email recipients without preparing a draft", async () => {
+        let followUpContents;
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "draft_email",
+                args: {
+                    to: "not-an-email",
+                    subject: "Project update",
+                    body: "Hello."
+                }
+            }]),
+            { text: "The draft is ready." }
+        ], request => {
+            followUpContents = request.contents;
+        });
+
+        const result = await runAgent(ai);
+
+        const functionResponse = followUpContents.at(-1)
+            .parts[0].functionResponse.response;
+        assert.equal(functionResponse.success, false);
+        assert.match(functionResponse.error, /Invalid arguments/);
+        assert.equal(result.success, false);
+        assert.equal(result.toolCalls[0].status, "failed");
+        assert.match(result.reply, /Invalid arguments/);
+    });
+
     await t.test("falls through models in order and classifies quota errors", async () => {
         const attemptedModels = [];
         const quotaError = Object.assign(new Error(JSON.stringify({

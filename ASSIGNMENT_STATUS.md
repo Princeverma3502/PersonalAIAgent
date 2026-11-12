@@ -10,6 +10,7 @@
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed reminder creation, listing, cancellation, due execution result, bounded retries, and in-app polling/acknowledgement.
+- Validated email draft preparation with deterministic user-visible content and an explicit not-sent status.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
 - Debug APK build and backend/Android unit-test commands.
 
@@ -24,7 +25,7 @@
 
 ## Not implemented
 
-- Email provider/Gmail integration and email sending.
+- Gmail/OAuth provider integration, email sending, and email search. Drafts are local-only and never sent.
 - Browser webpage retrieval/automation.
 - Actual execution of arbitrary scheduled actions.
 - Android system notifications or background reminder delivery.
@@ -36,8 +37,9 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 14 tests, 0 failures. The tests use mock AI and isolated scheduler storage. |
+| `npm --prefix backend test` | Passed: 16 tests, 0 failures. The tests use mock AI and isolated scheduler storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
+| Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, and repeated execution check. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
@@ -55,6 +57,7 @@
 - Room migration behavior has not been exercised.
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
+- Email drafts are not persisted or sent. Gmail OAuth/provider integration and a UI confirmation flow are required before enabling sending.
 - The Android unit-test suite currently contains only a basic example test; feature-specific Android tests and emulator testing remain.
 
 ## Recommended next steps
