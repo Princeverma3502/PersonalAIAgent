@@ -11,6 +11,7 @@
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed reminder creation, listing, cancellation, due execution result, bounded retries, and in-app polling/acknowledgement.
 - Validated email draft preparation with deterministic user-visible content and an explicit not-sent status.
+- Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
 - Debug APK build and backend/Android unit-test commands.
 
@@ -21,12 +22,13 @@
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
 - **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
+- **Webpage retrieval:** public URL content can be read and searched; interactive browsing and page actions are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
 ## Not implemented
 
 - Gmail/OAuth provider integration, email sending, and email search. Drafts are local-only and never sent.
-- Browser webpage retrieval/automation.
+- Interactive browser automation, authentication, and page actions such as clicking, scrolling, or submitting forms.
 - Actual execution of arbitrary scheduled actions.
 - Android system notifications or background reminder delivery.
 - Production authentication, HTTPS deployment, and configurable Android API environments.
@@ -37,9 +39,10 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 16 tests, 0 failures. The tests use mock AI and isolated scheduler storage. |
+| `npm --prefix backend test` | Passed: 26 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
+| Public webpage retrieval | Tests pass for URL/IP restrictions, redirect validation, text extraction, search, and tool registration. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, and repeated execution check. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
@@ -58,6 +61,7 @@
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
 - Email drafts are not persisted or sent. Gmail OAuth/provider integration and a UI confirmation flow are required before enabling sending.
+- Webpage access is read-only and requires the exact URL in the user's message. A smoke request to example.com passed; interactive automation is not implemented.
 - The Android unit-test suite currently contains only a basic example test; feature-specific Android tests and emulator testing remain.
 
 ## Recommended next steps

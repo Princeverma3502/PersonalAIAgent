@@ -14,7 +14,7 @@ The backend sends tool declarations and a conversation to Gemini. Gemini may ret
 
 ## How are tools registered and validated?
 
-`backend/src/agent/tools.js` defines each tool's name, description, JSON schema, argument validator, and handler in one registry. The backend validates names and arguments before running handlers; handlers may return `success: false` or throw, and both outcomes are reported as failures to Gemini. Keeping the schema and validator together avoids relying only on model-generated arguments.
+`backend/src/agent/tools.js` defines each tool's name, description, JSON schema, argument validator, and handler in one registry. The backend validates names and arguments before running handlers; handlers may return `success: false` or throw, and both outcomes are reported as failures to Gemini. Keeping the schema and validator together avoids relying only on model-generated arguments. The webpage tool requires a URL explicitly supplied by the user and treats retrieved content as untrusted data.
 
 ## How does Room persist memories?
 
@@ -42,5 +42,6 @@ The scheduler serializes task records into `backend/data/scheduled-tasks.json`, 
 - Retrying a failed tool call is inferred from tool name, arguments, and model round because there is no stable provider retry ID. Ambiguous multi-failure cases remain failed rather than being silently counted as success.
 - Scheduled-task storage is a simple JSON file suitable for a single local process, not concurrent distributed workers. Reminder delivery requires the Android app to be open.
 - Email support only prepares a validated, user-visible draft and explicitly does not send it. Sending would require a backend mail provider and a separate explicit confirmation flow.
+- Web access only retrieves bounded text from public URLs; it does not automate page controls or bypass sign-in. A smoke test read and searched `https://example.com` using mock Gemini responses.
 - Memory and agent UI behavior has been compiled but not interactively demonstrated on an emulator in the current validation pass.
-- Gmail sending/search, browser retrieval, Android system notifications, authentication, and production HTTPS setup are not implemented.
+- Gmail sending/search, interactive browser automation, Android system notifications, authentication, and production HTTPS setup are not implemented.

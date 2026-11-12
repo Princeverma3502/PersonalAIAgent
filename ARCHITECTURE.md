@@ -9,7 +9,9 @@ Compose UI
   ├─ Local memory commands ──> MemoryRepository ──> Room database
   └─ Other messages ──HTTP──> Express /api/agent ──> Gemini
                                                     └─ Registered tools
-                                                         └─ JSON scheduler
+                                                         ├─ JSON scheduler
+                                                         ├─ Email draft preparation
+                                                         └─ Read-only public webpage retrieval
 ```
 
 ## Android architecture
@@ -28,6 +30,7 @@ The current UI and data access are directly hosted by Compose state and reposito
 - `server.js` loads backend environment variables, configures Express security middleware, defines the three API routes, and initializes the scheduler before listening.
 - `agentService.js` validates the request, builds Gemini context, sends tool declarations, executes returned calls, and continues the model/tool loop for at most five rounds.
 - `tools.js` is the single registry for tool names, descriptions, JSON schemas, argument validation, and handlers.
+- `browserService.js` reads explicitly supplied public URLs using bounded HTTP(S) requests and extracts limited page text.
 - `geminiError.js` extracts provider error details, classifies common errors, redacts common credential patterns in diagnostics, and chooses user-facing messages.
 - `taskScheduler.js` stores scheduled task records in `backend/data/scheduled-tasks.json`.
 
@@ -65,10 +68,13 @@ The registry exposes:
 - `list_scheduled_tasks`
 - `cancel_scheduled_task`
 - `draft_email`
+- `read_public_webpage`
 
 Each tool has a schema and a local argument validator. Handlers can report failure with `success: false` or throw; both paths become failed tool calls and their error is sent back to Gemini. The response preserves the complete tool-call history and a compatibility `toolCall` field for the last call.
 
 `draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim to the user with an explicit “NOT SENT” label. There is no email provider, send tool, or search tool configured; sending is intentionally unavailable until a provider and a user-confirmation flow exist.
+
+`read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. The tool never clicks controls, submits forms, or authenticates.
 
 ## Memory persistence
 
@@ -95,4 +101,4 @@ The Compose control requests microphone permission only after a user tap. Speech
 - CORS allows the configured `ALLOWED_ORIGIN`, defaulting to `http://localhost:3000`.
 - `.env` files and backend scheduler data are ignored by Git; `.env.example` contains placeholders.
 - The current emulator setup uses cleartext HTTP and has no user authentication. Use HTTPS, authentication, deployment-specific origins, and secret management before exposing the service publicly.
-- No email provider/OAuth integration or browser retrieval tool is configured in this project.
+- No email provider/OAuth integration is configured. Browser retrieval is limited to explicit, public, read-only URLs; interactive automation is not implemented.

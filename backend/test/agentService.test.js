@@ -11,6 +11,7 @@ require.cache[schedulerPath].exports = {
 };
 
 const { runAgentTurn } = require("../src/agent/agentService");
+const { TOOL_REGISTRY } = require("../src/agent/tools");
 const {
     classifyGeminiError,
     safeProviderError
@@ -41,10 +42,14 @@ function createMockAi(responses, onRequest = () => {}) {
     };
 }
 
-async function runAgent(ai, modelList = ["test-model"]) {
+async function runAgent(
+    ai,
+    modelList = ["test-model"],
+    message = "Please cancel my task."
+) {
     return runAgentTurn({
         ai,
-        message: "Please cancel my task.",
+        message,
         modelList
     });
 }
@@ -260,6 +265,73 @@ test("agent tool and provider error handling", async t => {
         assert.equal(result.success, false);
         assert.equal(result.toolCalls[0].status, "failed");
         assert.match(result.reply, /Invalid arguments/);
+    });
+
+    await t.test("does not browse a URL the user did not explicitly provide", async () => {
+        let followUpContents;
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "read_public_webpage",
+                args: { url: "https://example.com/" }
+            }]),
+            { text: "The page says it is available." }
+        ], request => {
+            followUpContents = request.contents;
+        });
+
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Please read the latest news."
+        );
+
+        const functionResponse = followUpContents.at(-1)
+            .parts[0].functionResponse.response;
+        assert.equal(functionResponse.success, false);
+        assert.match(functionResponse.error, /exact public webpage URL/);
+        assert.equal(result.success, false);
+        assert.equal(result.toolCalls[0].status, "failed");
+        assert.match(result.reply, /exact public webpage URL/);
+    });
+
+    await t.test("does not give webpage content another tool-execution round", async () => {
+        const originalHandler =
+            TOOL_REGISTRY.read_public_webpage.handler;
+        TOOL_REGISTRY.read_public_webpage.handler = async () => ({
+            success: true,
+            url: "https://example.com/",
+            title: "Example page",
+            text: "Page content."
+        });
+
+        try {
+            let requestCount = 0;
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "read_public_webpage",
+                    args: { url: "https://example.com/" }
+                }]),
+                functionCallResponse([{
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "valid" }
+                }])
+            ], () => {
+                requestCount += 1;
+            });
+
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Read https://example.com/"
+            );
+
+            assert.equal(requestCount, 1);
+            assert.equal(result.toolCalls.length, 1);
+            assert.equal(result.toolCalls[0].name, "read_public_webpage");
+            assert.match(result.reply, /Page content\./);
+        } finally {
+            TOOL_REGISTRY.read_public_webpage.handler = originalHandler;
+        }
     });
 
     await t.test("falls through models in order and classifies quota errors", async () => {

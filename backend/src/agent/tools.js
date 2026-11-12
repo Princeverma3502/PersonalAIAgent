@@ -4,6 +4,10 @@ const {
     getTasks,
     cancelTask
 } = require("../scheduler/taskScheduler");
+const {
+    readPublicPage,
+    validateWebUrl
+} = require("./browserService");
 
 function isValidEmailDraft(args) {
     const recipient = args.to;
@@ -23,6 +27,37 @@ function isValidEmailDraft(args) {
         body.trim().length > 0 &&
         body.length <= 10000
     );
+}
+
+function isValidWebPageRequest(args) {
+    const keys = Object.keys(args);
+    if (
+        keys.length < 1 ||
+        keys.length > 2 ||
+        !keys.every(key => ["url", "searchTerm"].includes(key)) ||
+        typeof args.url !== "string"
+    ) {
+        return false;
+    }
+
+    if (
+        Object.prototype.hasOwnProperty.call(args, "searchTerm") &&
+        (
+            typeof args.searchTerm !== "string" ||
+            args.searchTerm.length > 100 ||
+            args.searchTerm.trim().length === 0 ||
+            args.searchTerm.trim().length > 100
+        )
+    ) {
+        return false;
+    }
+
+    try {
+        validateWebUrl(args.url);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 const TOOL_REGISTRY = Object.freeze({
@@ -144,6 +179,33 @@ const TOOL_REGISTRY = Object.freeze({
                 subject: args.subject.trim(),
                 body: args.body.trim()
             }
+        })
+    },
+
+    read_public_webpage: {
+        name: "read_public_webpage",
+        description: "Reads and extracts text from a public HTTP or HTTPS webpage URL explicitly provided by the user. This tool is read-only and does not interact with page controls.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                url: {
+                    type: "string",
+                    description: "The complete public webpage URL provided by the user."
+                },
+                searchTerm: {
+                    type: "string",
+                    description: "Optional phrase to find in the extracted page text, up to 100 characters."
+                }
+            },
+            required: ["url"],
+            additionalProperties: false
+        },
+        validateArgs: isValidWebPageRequest,
+        handler: async args => readPublicPage({
+            url: args.url.trim(),
+            ...(args.searchTerm
+                ? { searchTerm: args.searchTerm.trim() }
+                : {})
         })
     }
 });

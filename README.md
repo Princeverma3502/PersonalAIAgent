@@ -1,6 +1,6 @@
 # Personal AI Agent
 
-A Kotlin Android chat app backed by a Node.js service that connects to Google Gemini. The agent can call backend tools for scheduled-task management, while user memories are stored locally on the device.
+A Kotlin Android chat app backed by a Node.js service that connects to Google Gemini. The agent can call backend tools for reminders, email drafts, and read-only webpage retrieval, while user memories are stored locally on the device.
 
 ## Features
 
@@ -9,6 +9,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Local Room memory storage with save, list, search, and delete flows.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation; drafts are shown for review and are never sent.
+- Read-only public webpage retrieval and optional text search for URLs supplied by the user.
 - JSON-backed one-time reminders with create, list, cancel, execution results, and in-app delivery while the chat screen is open.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
@@ -90,6 +91,8 @@ Agent endpoint used by Android. `memories` is optional and contains short string
 
 Responses include `success`, `reply`, and `status`. Agent responses also include `toolCall` for compatibility and `toolCalls` for the execution history.
 
+The agent can use `read_public_webpage` when the user includes a complete public HTTP(S) URL. It returns the page title and bounded readable text, with an optional phrase search. It does not click, submit forms, authenticate, or automate page controls.
+
 ### `GET /api/reminders`
 
 Returns due in-app reminders that have not yet been acknowledged by the Android client.
@@ -121,7 +124,7 @@ Screenshots are not included yet.
 - Scheduled tasks support only an in-app reminder result. The app displays due reminders while open; it does not create Android system notifications, run a background worker, or execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
 - Email is draft-only: no Gmail/OAuth provider, sending, or email search is configured. Drafts are not sent.
-- Browser webpage retrieval is not configured or implemented; the agent must not claim to inspect webpages.
+- Browser access is read-only and limited to explicit public URLs; page interaction, authentication, and browser automation are not implemented.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
 - Local memories are included in agent requests (up to 10 entries, 500 characters each); backend logs do not include their contents.
