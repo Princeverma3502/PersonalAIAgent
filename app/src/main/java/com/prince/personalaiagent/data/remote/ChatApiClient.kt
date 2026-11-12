@@ -1,5 +1,7 @@
-﻿package com.prince.personalaiagent.data.remote
+﻿
+package com.prince.personalaiagent.data.remote
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -23,8 +25,13 @@ class ChatApiClient {
         private const val READ_TIMEOUT = 60000
     }
 
-    fun sendMessage(message: String): AgentResponse {
-        val connection = URL(BASE_URL).openConnection() as HttpURLConnection
+    fun sendMessage(
+        message: String,
+        memories: List<String> = emptyList()
+    ): AgentResponse {
+
+        val connection = URL(BASE_URL)
+            .openConnection() as HttpURLConnection
 
         try {
             connection.requestMethod = "POST"
@@ -37,8 +44,17 @@ class ChatApiClient {
                 "application/json"
             )
 
+            val memoriesJson = JSONArray()
+
+            memories.take(10).forEach { memory ->
+                if (memory.isNotBlank()) {
+                    memoriesJson.put(memory.take(500))
+                }
+            }
+
             val requestBody = JSONObject()
                 .put("message", message)
+                .put("memories", memoriesJson)
                 .toString()
 
             connection.outputStream.use { output ->
@@ -60,13 +76,50 @@ class ChatApiClient {
 
             val json = JSONObject(responseText)
 
-            val toolCall = json.optJSONObject("toolCall")
-            val toolName = toolCall?.optString("name")?.takeIf {
-                it.isNotBlank() && it != "null"
+            // Read all tool executions from the backend.
+            val toolCalls = json.optJSONArray("toolCalls")
+            val executedTools = mutableListOf<String>()
+
+            if (toolCalls != null) {
+                for (index in 0 until toolCalls.length()) {
+                    val tool = toolCalls.optJSONObject(index)
+                        ?: continue
+
+                    val name = tool.optString("name")
+                    val status = tool.optString("status")
+
+                    if (name.isNotBlank() && name != "null") {
+                        executedTools.add(
+                            if (status.isNotBlank() && status != "null") {
+                                "$name ($status)"
+                            } else {
+                                name
+                            }
+                        )
+                    }
+                }
             }
-            val status = toolCall?.optString("status")?.takeIf {
-                it.isNotBlank() && it != "null"
-            } ?: json.optString("status", "unknown")
+
+            // Support the existing single-tool response format too.
+            val singleTool = json.optJSONObject("toolCall")
+
+            val toolName = when {
+                executedTools.isNotEmpty() ->
+                    executedTools.joinToString(" → ")
+
+                singleTool != null -> {
+                    singleTool.optString("name")
+                        .takeIf { it.isNotBlank() && it != "null" }
+                }
+
+                else -> null
+            }
+
+            val status = json.optString("status")
+                .takeIf { it.isNotBlank() && it != "null" }
+                ?: singleTool?.optString("status")
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                ?: "unknown"
 
             val agentResponse = AgentResponse(
                 reply = json.optString(
