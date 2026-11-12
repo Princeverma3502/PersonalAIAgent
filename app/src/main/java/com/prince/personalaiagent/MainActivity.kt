@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.prince.personalaiagent.data.local.MemoryDatabase
+import com.prince.personalaiagent.data.local.MemoryRelevanceRanker
 import com.prince.personalaiagent.data.local.MemoryRepository
 import com.prince.personalaiagent.data.remote.AgentApiException
 import com.prince.personalaiagent.data.remote.AgentResponse
@@ -429,7 +430,12 @@ fun AgentScreen() {
                             val savedMemories = memoryRepository
                                 .getAllMemories()
                                 .first()
-                                .take(10)
+                                .let { memories ->
+                                    MemoryRelevanceRanker.selectRelevant(
+                                        userMessage,
+                                        memories
+                                    )
+                                }
                                 .map { memory -> memory.content }
 
                             apiClient.sendMessage(

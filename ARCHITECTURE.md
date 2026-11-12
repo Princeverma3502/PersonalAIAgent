@@ -78,7 +78,7 @@ Each tool has a schema and a local argument validator. Handlers can report failu
 
 ## Memory persistence
 
-Memories are kept only in the Android Room database. Local command phrases invoke repository operations for save, view, search, and delete. For normal agent requests, the client includes up to ten memories, truncated to 500 characters each, as prompt context. The backend does not persist the memory list.
+Memories are kept only in the Android Room database. Local command phrases invoke repository operations for save, view, search, and delete. For normal agent requests, the client ranks memories by meaningful lexical overlap with the current request and sends up to ten matches, truncated to 500 characters each. If no terms match, it falls back to the newest memories. The backend does not persist the memory list; retrieval is lexical rather than semantic.
 
 ## Scheduled-task flow and limitations
 

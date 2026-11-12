@@ -7,6 +7,7 @@
 - Parsing of all agent tool calls and their statuses.
 - Foreground, one-shot Android speech recognition with runtime microphone permission and recognized-text editing.
 - Room-backed local memories with save, list, search, single-delete, and confirmed delete-all flows.
+- Lexically relevance-ranked memory retrieval for agent context, with recent-memory fallback.
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
@@ -47,6 +48,7 @@
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, and repeated execution check. |
 | Recurring scheduler behavior | Isolated tests pass for five-field cron validation, minimum interval, IANA timezone, persistence, next-run advancement, reminder acknowledgement, and cancellation. |
 | Android background reminders | `.\gradlew.bat testDebugUnitTest assembleDebug` verifies WorkManager integration compiles and packages; no device notification or Doze-mode test has been completed. |
+| Memory retrieval | Unit tests verify relevance ranking, recent-memory fallback, and result limits. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |

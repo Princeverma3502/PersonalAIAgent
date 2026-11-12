@@ -6,7 +6,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 
 - Jetpack Compose chat UI with loading feedback, scrolling responses, and backend error handling.
 - Runtime-permission-based speech recognition that puts recognized text in the editable chat field.
-- Local Room memory storage with save, list, search, and delete flows.
+- Local Room memory storage with save, list, search, delete, and relevance-ranked agent context.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation; drafts are shown for review and are never sent.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
@@ -129,6 +129,6 @@ Screenshots are not included yet.
 - Browser access is read-only and limited to explicit public URLs; page interaction, authentication, and browser automation are not implemented.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
-- Local memories are included in agent requests (up to 10 entries, 500 characters each); backend logs do not include their contents.
+- Up to ten lexically relevant local memories are included in agent requests (500 characters each); if none match, the newest memories are used. Backend logs do not include their contents.
 - Gemini model availability and quota are controlled by the configured API account.
 - When a tool fails and the model retries the same tool in the next round with corrected arguments, the agent can treat the retry as resolving the earlier failure. If multiple same-tool failures are outstanding, an unrelated later success does not clear them. Tool outcome correlation remains a heuristic because the provider does not supply a stable retry identifier.
