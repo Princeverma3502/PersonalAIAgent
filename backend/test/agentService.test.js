@@ -154,6 +154,61 @@ test("agent tool and provider error handling", async t => {
         assert.equal(result.success, false);
     });
 
+    await t.test("does not let a same-round success hide another operation's failure", async () => {
+        const ai = createMockAi([
+            functionCallResponse([
+                {
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "missing" }
+                },
+                {
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "valid" }
+                }
+            ]),
+            { text: "Both tasks were cancelled." }
+        ]);
+
+        const result = await runAgent(ai);
+
+        assert.deepEqual(
+            result.toolCalls.map(call => call.status),
+            ["failed", "success"]
+        );
+        assert.equal(result.success, false);
+        assert.match(result.reply, /Pending task not found/);
+        assert.doesNotMatch(result.reply, /Both tasks were cancelled/);
+    });
+
+    await t.test("does not resolve multiple failures with one unrelated success", async () => {
+        const ai = createMockAi([
+            functionCallResponse([
+                {
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "missing-one" }
+                },
+                {
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "missing-two" }
+                }
+            ]),
+            functionCallResponse([{
+                name: "cancel_scheduled_task",
+                args: { taskId: "valid" }
+            }]),
+            { text: "The requested tasks were cancelled." }
+        ]);
+
+        const result = await runAgent(ai);
+
+        assert.deepEqual(
+            result.toolCalls.map(call => call.status),
+            ["failed", "failed", "success"]
+        );
+        assert.equal(result.success, false);
+        assert.equal((result.reply.match(/Pending task not found/g) || []).length, 2);
+    });
+
     await t.test("falls through models in order and classifies quota errors", async () => {
         const attemptedModels = [];
         const quotaError = Object.assign(new Error(JSON.stringify({

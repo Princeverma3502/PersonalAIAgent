@@ -132,32 +132,92 @@ function getFunctionCalls(response) {
         .map(part => part.functionCall);
 }
 
-function hasUnresolvedToolFailure(executedToolCalls) {
-    const latestResults = new Map();
-
-    for (const tool of executedToolCalls) {
-        latestResults.set(tool.name, tool);
+function serializeToolArguments(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(serializeToolArguments).join(",")}]`;
     }
 
-    return Array.from(latestResults.values()).some(
-        tool => tool.status === "failed"
-    );
+    if (value && typeof value === "object") {
+        return `{${Object.keys(value)
+            .sort()
+            .map(key =>
+                `${JSON.stringify(key)}:${serializeToolArguments(value[key])}`
+            )
+            .join(",")}}`;
+    }
+
+    return JSON.stringify(value);
 }
 
-function getToolFailureReply(executedToolCalls) {
-    const latestResults = new Map();
+function getUnresolvedToolFailures(toolAttempts) {
+    const attemptsByRound = new Map();
 
-    for (const tool of executedToolCalls) {
-        latestResults.set(tool.name, tool);
+    for (const attempt of toolAttempts) {
+        const roundAttempts = attemptsByRound.get(attempt.round) || [];
+        roundAttempts.push(attempt);
+        attemptsByRound.set(attempt.round, roundAttempts);
     }
 
-    const failures = Array.from(latestResults.values())
-        .filter(tool => tool.status === "failed");
+    const unresolved = [];
+
+    for (const [round, roundAttempts] of Array.from(attemptsByRound)
+        .sort(([left], [right]) => left - right)) {
+        unresolved.push(
+            ...roundAttempts.filter(attempt =>
+                attempt.result.status === "failed"
+            )
+        );
+
+        for (const attempt of roundAttempts) {
+            if (attempt.result.status !== "success") continue;
+
+            const earlierFailures = unresolved.filter(failure =>
+                failure.name === attempt.name &&
+                failure.round < round
+            );
+            const matchingArguments = earlierFailures.filter(failure =>
+                serializeToolArguments(failure.args) ===
+                serializeToolArguments(attempt.args)
+            );
+            let resolvedFailure = matchingArguments.length === 1
+                ? matchingArguments[0]
+                : null;
+
+            if (!resolvedFailure) {
+                const immediatelyPreviousFailures =
+                    earlierFailures.filter(failure =>
+                        failure.round === round - 1
+                    );
+                const sameNameCallsThisRound = roundAttempts.filter(
+                    roundAttempt => roundAttempt.name === attempt.name
+                ).length;
+
+                if (
+                    immediatelyPreviousFailures.length === 1 &&
+                    sameNameCallsThisRound === 1
+                ) {
+                    resolvedFailure = immediatelyPreviousFailures[0];
+                }
+            }
+
+            if (resolvedFailure) {
+                unresolved.splice(unresolved.indexOf(resolvedFailure), 1);
+            }
+        }
+    }
+
+    return unresolved;
+}
+
+function getToolFailureReply(toolAttempts) {
+    const failures = getUnresolvedToolFailures(toolAttempts);
 
     if (failures.length === 0) return null;
 
     return failures
-        .map(tool => `${tool.name}: ${tool.error}`)
+        .map(attempt =>
+            `${attempt.result.name}: ${attempt.result.error}`
+        )
         .join("\n");
 }
 
@@ -239,6 +299,7 @@ When all required actions are complete, give the user a concise summary.
 
     modelLoop: for (const model of modelList) {
         const executedToolCalls = [];
+        const toolAttempts = [];
 
         try {
             console.log(`Trying agent model: ${model}`);
@@ -264,10 +325,9 @@ When all required actions are complete, give the user a concise summary.
                 const functionCalls = getFunctionCalls(response);
 
                 if (functionCalls.length === 0) {
-                    const hasFailedTool =
-                        hasUnresolvedToolFailure(executedToolCalls);
                     const toolFailureReply =
-                        getToolFailureReply(executedToolCalls);
+                        getToolFailureReply(toolAttempts);
+                    const hasFailedTool = toolFailureReply !== null;
 
                     return {
                         success: !hasFailedTool,
@@ -309,6 +369,12 @@ When all required actions are complete, give the user a concise summary.
                     );
 
                     executedToolCalls.push(result);
+                    toolAttempts.push({
+                        name: result.name,
+                        args: functionCall.args ?? {},
+                        round,
+                        result
+                    });
 
                     console.log(
                         `Agent tool ${result.name}: ${result.status}`
@@ -376,7 +442,7 @@ When all required actions are complete, give the user a concise summary.
 
             if (executedToolCalls.length > 0) {
                 const toolFailureReply =
-                    getToolFailureReply(executedToolCalls);
+                    getToolFailureReply(toolAttempts);
 
                 return {
                     success: toolFailureReply === null,
