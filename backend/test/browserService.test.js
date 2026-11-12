@@ -2,8 +2,10 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const {
     extractPageContent,
+    extractPageLinks,
     findSearchMatches,
     isPublicIpAddress,
+    readLinkedPublicPages,
     readPublicPage,
     validateWebUrl
 } = require("../src/agent/browserService");
@@ -52,6 +54,26 @@ test("public webpage retrieval safety and content handling", async t => {
         assert.match(page.text, /Welcome/);
         assert.match(page.text, /Read <this>\./);
         assert.doesNotMatch(page.text, /secret|hidden/);
+    });
+
+    await t.test("extracts a bounded set of unique same-origin HTTP links", () => {
+        const pageUrl = validateWebUrl("https://example.com/");
+        const links = extractPageLinks(
+            "<a href='/news'>News</a>" +
+                "<a href='https://example.com/news#section'>Duplicate</a>" +
+                "<a href='//other.example/news'>External</a>" +
+                "<a href='javascript:alert(1)'>Unsafe</a>" +
+                "<script><a href='/script-link'>Ignored</a></script>" +
+                "<a href='/about'>About</a>" +
+                "<a href='/later'>Beyond limit</a>",
+            "text/html",
+            pageUrl
+        );
+
+        assert.deepEqual(links, [
+            "https://example.com/news",
+            "https://example.com/about"
+        ]);
     });
 
     await t.test("finds a bounded number of case-insensitive text matches", () => {
@@ -113,8 +135,74 @@ test("public webpage retrieval safety and content handling", async t => {
         assert.match(result.matches[0], /important detail/);
     });
 
+    await t.test("reads only a bounded set of linked pages on the seed origin", async () => {
+        const requestedUrls = [];
+        const adapters = {
+            resolveAddress: async () => ({
+                address: "93.184.216.34",
+                family: 4
+            }),
+            fetchPage: async url => {
+                requestedUrls.push(url.href);
+                if (url.pathname === "/start") {
+                    return {
+                        contentType: "text/html",
+                        body: "<title>Start</title>" +
+                            "<a href='/article'>Article</a>" +
+                            "<a href='/about'>About</a>" +
+                            "<a href='/ignored'>Ignored</a>"
+                    };
+                }
+
+                return {
+                    contentType: "text/html",
+                    body: `<title>${url.pathname}</title><p>Linked content</p>`
+                };
+            }
+        };
+
+        const result = await readLinkedPublicPages({
+            url: "https://example.com/start"
+        }, adapters);
+
+        assert.deepEqual(requestedUrls, [
+            "https://example.com/start",
+            "https://example.com/article",
+            "https://example.com/about"
+        ]);
+        assert.deepEqual(
+            result.pages.map(page => page.title),
+            ["Start", "/article", "/about"]
+        );
+    });
+
+    await t.test("does not follow a linked-page redirect to another origin", async () => {
+        let fetchCount = 0;
+        const adapters = {
+            resolveAddress: async () => ({
+                address: "93.184.216.34",
+                family: 4
+            }),
+            fetchPage: async () => {
+                fetchCount += 1;
+                return {
+                    redirectLocation: "https://other.example/redirected"
+                };
+            }
+        };
+
+        await assert.rejects(
+            readLinkedPublicPages({
+                url: "https://example.com/start"
+            }, adapters),
+            /must remain on the original site/
+        );
+        assert.equal(fetchCount, 1);
+    });
+
     await t.test("registers the read-only browser tool with a URL argument", () => {
         const tool = validateToolName("read_public_webpage");
+        const linkedTool = validateToolName("read_public_linked_pages");
         const declarations = getToolDeclaration().functionDeclarations;
 
         assert.ok(tool);
@@ -135,6 +223,21 @@ test("public webpage retrieval safety and content handling", async t => {
         );
         assert.ok(declarations.some(item =>
             item.name === "read_public_webpage"
+        ));
+        assert.ok(linkedTool);
+        assert.equal(
+            linkedTool.validateArgs({ url: "https://example.com/" }),
+            true
+        );
+        assert.equal(
+            linkedTool.validateArgs({
+                url: "https://example.com/",
+                searchTerm: "extra field"
+            }),
+            false
+        );
+        assert.ok(declarations.some(item =>
+            item.name === "read_public_linked_pages"
         ));
     });
 });

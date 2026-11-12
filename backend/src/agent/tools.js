@@ -7,6 +7,7 @@ const {
 } = require("../scheduler/taskScheduler");
 const {
     readPublicPage,
+    readLinkedPublicPages,
     validateWebUrl
 } = require("./browserService");
 
@@ -400,6 +401,26 @@ const TOOL_REGISTRY = Object.freeze({
             }
             return { success: true, pages };
         }
+    },
+
+    read_public_linked_pages: {
+        name: "read_public_linked_pages",
+        description: "Reads a user-provided public webpage and up to two same-origin pages linked from it. Use only when the user explicitly asks to follow or read links. This is read-only and never interacts with page controls.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                url: {
+                    type: "string",
+                    description: "The complete public webpage URL explicitly provided by the user."
+                }
+            },
+            required: ["url"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length === 1 &&
+            isValidWebPageRequest(args),
+        handler: async ({ url }) => readLinkedPublicPages({ url })
     }
 });
 

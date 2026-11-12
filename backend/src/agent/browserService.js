@@ -10,6 +10,7 @@ const MAX_REDIRECTS = 3;
 const REQUEST_TIMEOUT_MS = 7000;
 const DNS_TIMEOUT_MS = 2500;
 const SEARCH_MATCH_LIMIT = 5;
+const LINKED_PAGE_LIMIT = 2;
 
 const BLOCKED_IPV4_RANGES = [
     ["0.0.0.0", 8],
@@ -406,6 +407,59 @@ function extractPageContent(content, contentType, url) {
     };
 }
 
+function extractPageLinks(
+    content,
+    contentType,
+    pageUrl,
+    limit = LINKED_PAGE_LIMIT
+) {
+    if (!["text/html", "application/xhtml+xml"].includes(contentType)) {
+        return [];
+    }
+
+    const links = [];
+    const seen = new Set([pageUrl.href]);
+    const anchorPattern = /<a\b([^>]*)>/gi;
+    const searchableContent = content
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(
+            /<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
+            " "
+        );
+    let anchorMatch;
+
+    while (
+        links.length < limit &&
+        (anchorMatch = anchorPattern.exec(searchableContent)) !== null
+    ) {
+        const hrefMatch = anchorMatch[1].match(
+            /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i
+        );
+        const rawHref = hrefMatch &&
+            (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3]);
+        if (!rawHref) continue;
+
+        try {
+            const candidate = validateWebUrl(
+                new URL(decodeHtmlEntities(rawHref), pageUrl).href
+            );
+            if (
+                candidate.origin !== pageUrl.origin ||
+                seen.has(candidate.href)
+            ) {
+                continue;
+            }
+
+            seen.add(candidate.href);
+            links.push(candidate.href);
+        } catch {
+            continue;
+        }
+    }
+
+    return links;
+}
+
 function findSearchMatches(text, searchTerm) {
     if (!searchTerm) return [];
 
@@ -431,7 +485,12 @@ function findSearchMatches(text, searchTerm) {
 }
 
 async function readPublicPage(
-    { url: rawUrl, searchTerm },
+    {
+        url: rawUrl,
+        searchTerm,
+        includeLinks = false,
+        sameOriginOnly = false
+    },
     adapters = {}
 ) {
     const resolveAddress = adapters.resolveAddress || resolvePublicAddress;
@@ -450,9 +509,18 @@ async function readPublicPage(
             if (redirectCount >= MAX_REDIRECTS) {
                 throw new Error("The webpage exceeded the redirect limit.");
             }
-            currentUrl = validateWebUrl(
+            const redirectedUrl = validateWebUrl(
                 new URL(response.redirectLocation, currentUrl).href
             );
+            if (
+                sameOriginOnly &&
+                redirectedUrl.origin !== new URL(rawUrl).origin
+            ) {
+                throw new Error(
+                    "Linked webpage redirects must remain on the original site."
+                );
+            }
+            currentUrl = redirectedUrl;
             continue;
         }
 
@@ -474,14 +542,50 @@ async function readPublicPage(
             result.matches = findSearchMatches(extracted.text, searchTerm);
         }
 
+        if (includeLinks) {
+            result.links = extractPageLinks(
+                response.body,
+                response.contentType,
+                currentUrl
+            );
+        }
+
         return result;
     }
 }
 
+async function readLinkedPublicPages({ url }, adapters = {}) {
+    const originalUrl = validateWebUrl(url);
+    const sourcePage = await readPublicPage({
+        url: originalUrl.href,
+        includeLinks: true,
+        sameOriginOnly: true
+    }, adapters);
+    const links = sourcePage.links || [];
+    const pages = [{
+        success: true,
+        url: sourcePage.url,
+        title: sourcePage.title,
+        text: sourcePage.text
+    }];
+
+    for (const link of links) {
+        const page = await readPublicPage({
+            url: link,
+            sameOriginOnly: true
+        }, adapters);
+        pages.push(page);
+    }
+
+    return { success: true, pages };
+}
+
 module.exports = {
     extractPageContent,
+    extractPageLinks,
     findSearchMatches,
     isPublicIpAddress,
+    readLinkedPublicPages,
     readPublicPage,
     validateWebUrl
 };

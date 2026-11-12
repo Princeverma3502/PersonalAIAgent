@@ -409,6 +409,102 @@ test("agent tool and provider error handling", async t => {
         assert.equal(validate({ urls: ["http://127.0.0.1/"] }), false);
     });
 
+    await t.test("reads linked pages only from an explicitly provided seed and without a follow-up round", async () => {
+        const originalHandler =
+            TOOL_REGISTRY.read_public_linked_pages.handler;
+        TOOL_REGISTRY.read_public_linked_pages.handler = async ({ url }) => ({
+            success: true,
+            pages: [
+                {
+                    url,
+                    title: "Starting page",
+                    text: "Starting content."
+                },
+                {
+                    url: "https://example.com/related",
+                    title: "Related page",
+                    text: "Related content."
+                }
+            ]
+        });
+
+        try {
+            let requestCount = 0;
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "read_public_linked_pages",
+                    args: { url: "https://example.com/" }
+                }]),
+                functionCallResponse([{
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "valid" }
+                }])
+            ], () => {
+                requestCount += 1;
+            });
+
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Follow links from https://example.com/ and summarize the related page."
+            );
+
+            assert.equal(requestCount, 1);
+            assert.equal(result.success, true);
+            assert.equal(result.toolCalls[0].name, "read_public_linked_pages");
+            assert.match(result.reply, /Starting content/);
+            assert.match(result.reply, /Related content/);
+        } finally {
+            TOOL_REGISTRY.read_public_linked_pages.handler = originalHandler;
+        }
+    });
+
+    await t.test("rejects linked-page reads when the seed URL was not supplied", async () => {
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "read_public_linked_pages",
+                args: { url: "https://example.com/" }
+            }]),
+            { text: "I followed the page links." }
+        ]);
+
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Follow links from the article you find."
+        );
+
+        assert.equal(result.success, false);
+        assert.equal(result.toolCalls[0].status, "failed");
+        assert.match(result.reply, /exact public webpage URL/);
+    });
+
+    await t.test("does not follow links unless the user explicitly asks", async () => {
+        for (const message of [
+            "Read https://example.com/",
+            "Read https://example.com/ but do not follow links."
+        ]) {
+            const result = await runAgent(
+                createMockAi([
+                    functionCallResponse([{
+                        name: "read_public_linked_pages",
+                        args: { url: "https://example.com/" }
+                    }]),
+                    { text: "I read the links from the page." }
+                ]),
+                ["test-model"],
+                message
+            );
+
+            assert.equal(result.success, false);
+            assert.equal(result.toolCalls[0].status, "failed");
+            assert.match(
+                result.reply,
+                /explicitly ask me to follow or read links/
+            );
+        }
+    });
+
     await t.test("does not give webpage content another tool-execution round", async () => {
         const originalHandler =
             TOOL_REGISTRY.read_public_webpage.handler;
