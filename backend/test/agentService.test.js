@@ -6,6 +6,8 @@ const schedulerPath = require.resolve("../src/scheduler/taskScheduler");
 require(schedulerPath);
 require.cache[schedulerPath].exports = {
     createTask: (...args) => taskHandlers.createTask(...args),
+    createRecurringTask: (...args) =>
+        taskHandlers.createRecurringTask(...args),
     getTasks: (...args) => taskHandlers.getTasks(...args),
     cancelTask: (...args) => taskHandlers.cancelTask(...args)
 };
@@ -59,6 +61,15 @@ test("agent tool and provider error handling", async t => {
         createTask: async () => {
             throw new Error("Task execution time must be in the future.");
         },
+        createRecurringTask: async args => ({
+            id: "recurring-task",
+            title: args.title,
+            runAt: "2099-01-01T03:30:00.000Z",
+            recurrence: {
+                cronExpression: args.cronExpression,
+                timeZone: args.timeZone
+            }
+        }),
         getTasks: async () => [],
         cancelTask: async taskId => taskId === "valid"
             ? { success: true, message: "Task cancelled." }
@@ -332,6 +343,41 @@ test("agent tool and provider error handling", async t => {
         } finally {
             TOOL_REGISTRY.read_public_webpage.handler = originalHandler;
         }
+    });
+
+    await t.test("uses the Android timezone for recurring reminder tools", async () => {
+        let initialPrompt;
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "create_recurring_task",
+                args: {
+                    title: "Morning reminder",
+                    description: "Review today's plan.",
+                    cronExpression: "0 9 * * *",
+                    timeZone: "Asia/Kolkata"
+                }
+            }]),
+            { text: "The reminder is scheduled." }
+        ], request => {
+            initialPrompt = request.contents[0].parts[0].text;
+        });
+
+        const result = await runAgentTurn({
+            ai,
+            message: "Remind me every morning at 9.",
+            timeZone: "Asia/Kolkata",
+            modelList: ["test-model"]
+        });
+
+        assert.match(initialPrompt, /user's IANA timezone is Asia\/Kolkata/);
+        assert.equal(result.success, true);
+        assert.equal(result.toolCalls[0].name, "create_recurring_task");
+        assert.equal(
+            result.toolCalls[0].result.task.recurrence.timeZone,
+            "Asia/Kolkata"
+        );
+        assert.match(result.reply, /only displays a reminder/);
+        assert.doesNotMatch(result.reply, /The reminder is scheduled/);
     });
 
     await t.test("falls through models in order and classifies quota errors", async () => {

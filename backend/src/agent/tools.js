@@ -1,6 +1,7 @@
 
 const {
     createTask,
+    createRecurringTask,
     getTasks,
     cancelTask
 } = require("../scheduler/taskScheduler");
@@ -108,6 +109,49 @@ const TOOL_REGISTRY = Object.freeze({
         handler: async args => ({
             success: true,
             task: await createTask(args)
+        })
+    },
+
+    create_recurring_task: {
+        name: "create_recurring_task",
+        description: "Creates a recurring in-app reminder from a five-field cron expression and the user's IANA timezone. It only creates reminders; it does not run other actions.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                title: {
+                    type: "string",
+                    description: "Short reminder title."
+                },
+                description: {
+                    type: "string",
+                    description: "Reminder message to show when each occurrence is due."
+                },
+                cronExpression: {
+                    type: "string",
+                    description: "Five-field cron expression, for example '0 9 * * *' for every day at 9:00 AM."
+                },
+                timeZone: {
+                    type: "string",
+                    description: "IANA timezone, for example 'Asia/Kolkata'."
+                }
+            },
+            required: [
+                "title",
+                "description",
+                "cronExpression",
+                "timeZone"
+            ],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length === 4 &&
+            typeof args.title === "string" &&
+            typeof args.description === "string" &&
+            typeof args.cronExpression === "string" &&
+            typeof args.timeZone === "string",
+        handler: async args => ({
+            success: true,
+            task: await createRecurringTask(args)
         })
     },
 

@@ -149,7 +149,7 @@ app.post("/api/agent", async (req, res) => {
         });
     }
 
-    const { message, memories } = req.body || {};
+    const { message, memories, timeZone } = req.body || {};
 
     // Validate and sanitize memories before using them.
     const safeMemories = Array.isArray(memories)
@@ -175,6 +175,38 @@ app.post("/api/agent", async (req, res) => {
         });
     }
 
+    let safeTimeZone;
+    if (timeZone !== undefined) {
+        if (
+            typeof timeZone !== "string" ||
+            !timeZone.trim() ||
+            timeZone.length > 100
+        ) {
+            return res.status(400).json({
+                success: false,
+                reply: "Please provide a valid IANA timezone.",
+                status: "failed",
+                toolCall: null,
+                toolCalls: []
+            });
+        }
+
+        try {
+            new Intl.DateTimeFormat("en-US", {
+                timeZone: timeZone.trim()
+            }).format(new Date());
+            safeTimeZone = timeZone.trim();
+        } catch {
+            return res.status(400).json({
+                success: false,
+                reply: "Please provide a valid IANA timezone.",
+                status: "failed",
+                toolCall: null,
+                toolCalls: []
+            });
+        }
+    }
+
     try {
         console.log("[AGENT] Starting agent execution.");
 
@@ -182,6 +214,7 @@ app.post("/api/agent", async (req, res) => {
             ai,
             message,
             memories: safeMemories,
+            timeZone: safeTimeZone,
             modelList: AI_MODELS
         });
 

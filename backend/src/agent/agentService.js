@@ -313,10 +313,38 @@ function getBrowserPageReply(toolAttempts) {
     }).join("\n\n");
 }
 
+function getRecurringReminderReply(toolAttempts) {
+    const tasks = toolAttempts
+        .filter(attempt =>
+            attempt.name === "create_recurring_task" &&
+            attempt.result.status === "success"
+        )
+        .map(attempt => attempt.result.result?.task)
+        .filter(task => task);
+
+    if (tasks.length === 0) return null;
+
+    return tasks.map(task => [
+        "Recurring in-app reminder scheduled. This only displays a reminder; it does not run other actions.",
+        `Title: ${task.title}`,
+        `Schedule: ${task.recurrence.cronExpression} (${task.recurrence.timeZone})`,
+        `Next occurrence: ${task.runAt}`
+    ].join("\n")).join("\n\n");
+}
+
+function getDeterministicToolReply(toolAttempts) {
+    return [
+        getEmailDraftReply(toolAttempts),
+        getBrowserPageReply(toolAttempts),
+        getRecurringReminderReply(toolAttempts)
+    ].filter(Boolean).join("\n\n");
+}
+
 async function runAgentTurn({
     ai,
     message,
     memories = [],
+    timeZone,
     modelList
 }) {
     const trimmedMessage =
@@ -357,8 +385,11 @@ ${safeMemories.map((memory, index) =>
 
     const instructions = `
 You are a personal AI agent with access to registered tools.
+${typeof timeZone === "string" && timeZone.trim()
+    ? `The user's IANA timezone is ${timeZone.trim()}.`
+    : "The user's timezone is unknown; ask them before creating a recurring reminder."}
 
-For requests involving scheduled tasks:
+For one-time reminder requests:
 - Use get_current_time immediately before calculating a scheduled time.
 - Calculate the requested future date and time using the returned timestamp.
 - Use create_scheduled_task to actually save the task.
@@ -369,6 +400,11 @@ For requests involving scheduled tasks:
 - Never claim a task was scheduled unless the tool confirms successful creation.
 - If the requested date or time is ambiguous, ask the user to clarify.
 - Use list_scheduled_tasks and cancel_scheduled_task when appropriate.
+For recurring reminder requests:
+- Create only an in-app reminder using create_recurring_task.
+- Use a five-field cron expression and the user's IANA timezone above.
+- If the user's desired time or timezone is ambiguous, ask before scheduling.
+- Do not claim that a recurring reminder checks email or performs any action beyond displaying a reminder.
 
 When a tool fails:
 - Read the error returned by the tool.
@@ -422,15 +458,9 @@ When all required actions are complete, give the user a concise summary.
                 if (functionCalls.length === 0) {
                     const toolFailureReply =
                         getToolFailureReply(toolAttempts);
-                    const emailDraftReply =
-                        getEmailDraftReply(toolAttempts);
-                    const browserPageReply =
-                        getBrowserPageReply(toolAttempts);
                     const hasFailedTool = toolFailureReply !== null;
-                    const deterministicToolReply = [
-                        emailDraftReply,
-                        browserPageReply
-                    ].filter(Boolean).join("\n\n");
+                    const deterministicToolReply =
+                        getDeterministicToolReply(toolAttempts);
 
                     return {
                         success: !hasFailedTool,
@@ -519,12 +549,8 @@ When all required actions are complete, give the user a concise summary.
                 if (browserPageReply !== null) {
                     const toolFailureReply =
                         getToolFailureReply(toolAttempts);
-                    const emailDraftReply =
-                        getEmailDraftReply(toolAttempts);
-                    const deterministicToolReply = [
-                        emailDraftReply,
-                        browserPageReply
-                    ].filter(Boolean).join("\n\n");
+                    const deterministicToolReply =
+                        getDeterministicToolReply(toolAttempts);
 
                     return {
                         success: toolFailureReply === null,
@@ -572,14 +598,8 @@ When all required actions are complete, give the user a concise summary.
             if (executedToolCalls.length > 0) {
                 const toolFailureReply =
                     getToolFailureReply(toolAttempts);
-                const emailDraftReply =
-                    getEmailDraftReply(toolAttempts);
-                const browserPageReply =
-                    getBrowserPageReply(toolAttempts);
-                const deterministicToolReply = [
-                    emailDraftReply,
-                    browserPageReply
-                ].filter(Boolean).join("\n\n");
+                const deterministicToolReply =
+                    getDeterministicToolReply(toolAttempts);
 
                 return {
                     success: toolFailureReply === null,

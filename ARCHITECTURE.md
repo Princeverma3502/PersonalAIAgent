@@ -82,14 +82,14 @@ Memories are kept only in the Android Room database. Local command phrases invok
 
 ## Scheduled-task flow and limitations
 
-1. Gemini obtains current time and requests a task with title, description, and an ISO 8601 `runAt` value containing `Z` or an explicit offset.
-2. The scheduler checks non-empty bounded title/description, valid timestamp, and future execution time.
-3. The task record is written to JSON using a temporary file followed by rename.
-4. The scheduler checks for due pending reminders every five seconds. It persists an `executing` state, creates a durable reminder result keyed by task ID, and persists completion. Interrupted `executing` tasks are re-queued at startup; action failures retry with bounded backoff and eventually become `failed`.
-5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds, displays each task ID once per app process, and acknowledges it with `POST /api/reminders/:taskId/ack`.
-6. Cancellation only changes a pending task to `cancelled`; unknown, completed, or cancelled IDs return failure.
+1. A one-time reminder uses a future ISO 8601 `runAt` value with an explicit timezone offset. A recurring reminder uses a five-field cron expression and the Android client's IANA timezone.
+2. The scheduler validates task text and schedule syntax; recurring schedules must be at least five minutes apart.
+3. Task records are written to JSON using a temporary file followed by rename. Recurring records retain their cron expression, timezone, and next execution time.
+4. The scheduler checks for due reminders every five seconds. It persists an `executing` state and reminder result; one-time tasks become completed, while recurring tasks advance to their next cron occurrence and stay pending. Interrupted tasks are re-queued at startup; action failures retry with bounded backoff.
+5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds, displays each reminder ID once per app process, and acknowledges it with `POST /api/reminders/:taskId/ack`. At most 20 unacknowledged occurrences are retained per recurring task.
+6. Cancellation stops future occurrences of a pending recurring task; unknown or non-pending task IDs return failure.
 
-**Important:** The only supported action is creating an in-app reminder result. There are no Android system notifications or background app polling; reminders are displayed when the app is open. The scheduler does not run arbitrary actions or execute generated code.
+**Important:** The only supported scheduled action is creating an in-app reminder result. The backend must be running, and Android delivery is foreground polling only. There are no Android system notifications or background workers. Cron schedules do not run arbitrary actions or execute generated code.
 
 ## Voice input
 

@@ -10,7 +10,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation; drafts are shown for review and are never sent.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
-- JSON-backed one-time reminders with create, list, cancel, execution results, and in-app delivery while the chat screen is open.
+- JSON-backed one-time and recurring in-app reminders with create, list, cancel, execution results, and delivery while the chat screen is open.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
 ## Architecture
@@ -24,7 +24,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for component and request-flow details,
 ## Technology stack
 
 - Android: Kotlin, Jetpack Compose, Material 3, Room, Kotlin coroutines.
-- Backend: Node.js, Express, `@google/genai`, Helmet, CORS, and `express-rate-limit`.
+- Backend: Node.js, Express, `@google/genai`, `cron-parser`, Helmet, CORS, and `express-rate-limit`.
 - Build and tests: Gradle, Kotlin/JUnit, and Node's built-in test runner.
 
 ## Backend setup
@@ -93,6 +93,8 @@ Responses include `success`, `reply`, and `status`. Agent responses also include
 
 The agent can use `read_public_webpage` when the user includes a complete public HTTP(S) URL. It returns the page title and bounded readable text, with an optional phrase search. It does not click, submit forms, authenticate, or automate page controls.
 
+Recurring reminder requests use a five-field cron expression and the Android device's IANA timezone. They create reminders only; they do not execute email checks or other actions.
+
 ### `GET /api/reminders`
 
 Returns due in-app reminders that have not yet been acknowledged by the Android client.
@@ -121,7 +123,7 @@ Screenshots are not included yet.
 
 ## Known limitations
 
-- Scheduled tasks support only an in-app reminder result. The app displays due reminders while open; it does not create Android system notifications, run a background worker, or execute arbitrary actions.
+- Scheduled tasks support one-time and recurring in-app reminders only. The backend must remain running, and the app displays due reminders while open; there are no Android system notifications, background workers, or arbitrary scheduled actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
 - Email is draft-only: no Gmail/OAuth provider, sending, or email search is configured. Drafts are not sent.
 - Browser access is read-only and limited to explicit public URLs; page interaction, authentication, and browser automation are not implemented.

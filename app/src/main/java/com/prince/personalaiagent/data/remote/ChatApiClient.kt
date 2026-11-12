@@ -8,6 +8,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.TimeZone
 
 data class AgentResponse(
     val reply: String,
@@ -147,6 +148,7 @@ class ChatApiClient {
             val requestBody = JSONObject()
                 .put("message", message)
                 .put("memories", memoriesJson)
+                .put("timeZone", TimeZone.getDefault().id)
                 .toString()
 
             connection.outputStream.use { output ->

@@ -21,7 +21,10 @@ async function compileScheduler(temporaryDirectory) {
 
     const schedulerModule = new Module(modulePath, module);
     schedulerModule.filename = modulePath;
-    schedulerModule.paths = Module._nodeModulePaths(path.dirname(modulePath));
+    schedulerModule.paths = [
+        ...Module._nodeModulePaths(path.dirname(modulePath)),
+        path.join(__dirname, "../node_modules")
+    ];
     schedulerModule._compile(source, modulePath);
 
     return schedulerModule.exports;
@@ -160,5 +163,97 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
         assert.equal(storedTask.status, "failed");
         assert.equal(storedTask.executionAttempts, 3);
         assert.equal(storedTask.result, null);
+    });
+
+    await t.test("creates timezone-aware recurring reminders and validates cron frequency", async t => {
+        const { directory, scheduler } = await loadIsolatedScheduler(t);
+
+        await assert.rejects(
+            scheduler.createRecurringTask({
+                title: "Invalid cron",
+                description: "This must be rejected.",
+                cronExpression: "every day",
+                timeZone: "Asia/Kolkata"
+            }),
+            /five-field cron expression/
+        );
+        await assert.rejects(
+            scheduler.createRecurringTask({
+                title: "Invalid timezone",
+                description: "This must be rejected.",
+                cronExpression: "0 9 * * *",
+                timeZone: "Not/A_Timezone"
+            }),
+            /valid IANA timezone/
+        );
+        await assert.rejects(
+            scheduler.createRecurringTask({
+                title: "Too frequent",
+                description: "This must be rejected.",
+                cronExpression: "* * * * *",
+                timeZone: "UTC"
+            }),
+            /at least five minutes/
+        );
+
+        const task = await scheduler.createRecurringTask({
+            title: "Morning reminder",
+            description: "Review today's plan.",
+            cronExpression: "0 9 * * *",
+            timeZone: "Asia/Kolkata"
+        });
+        const persistedScheduler = await compileScheduler(directory);
+        const persistedTask = (await persistedScheduler.getTasks()).find(
+            item => item.id === task.id
+        );
+
+        assert.equal(task.status, "pending");
+        assert.deepEqual(task.recurrence, {
+            cronExpression: "0 9 * * *",
+            timeZone: "Asia/Kolkata"
+        });
+        assert.ok(new Date(task.runAt).getTime() > Date.now());
+        assert.equal(
+            new Intl.DateTimeFormat("en-US", {
+                timeZone: "Asia/Kolkata",
+                hour: "2-digit",
+                minute: "2-digit",
+                hourCycle: "h23"
+            }).format(new Date(task.runAt)),
+            "09:00"
+        );
+        assert.equal(persistedTask.recurrence.timeZone, "Asia/Kolkata");
+    });
+
+    await t.test("executes recurring reminders, advances schedule, and acknowledges each occurrence", async t => {
+        const { directory, scheduler } = await loadIsolatedScheduler(t);
+        const task = await scheduler.createRecurringTask({
+            title: "Recurring test",
+            description: "This test runs only in temporary storage.",
+            cronExpression: "*/5 * * * *",
+            timeZone: "UTC"
+        });
+        task.runAt = new Date(Date.now() - 1000).toISOString();
+
+        const executed = await scheduler.executeDueTasks();
+        const reminders = await scheduler.getPendingReminders();
+
+        assert.equal(executed.length, 1);
+        assert.equal(task.status, "pending");
+        assert.ok(new Date(task.runAt).getTime() > Date.now());
+        assert.equal(reminders.length, 1);
+        assert.equal(reminders[0].scheduledTaskId, task.id);
+        assert.equal(reminders[0].message, task.description);
+        const restartedScheduler = await compileScheduler(directory);
+        assert.equal(
+            (await restartedScheduler.getPendingReminders())[0].taskId,
+            reminders[0].taskId
+        );
+        assert.equal(
+            (await scheduler.acknowledgeReminder(reminders[0].taskId)).success,
+            true
+        );
+        assert.equal((await scheduler.getPendingReminders()).length, 0);
+        assert.equal((await scheduler.cancelTask(task.id)).success, true);
     });
 });

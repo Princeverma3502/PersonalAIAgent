@@ -2,13 +2,91 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const { CronExpressionParser } = require("cron-parser");
 
 const DATA_DIRECTORY = path.join(__dirname, "../../data");
 const TASKS_FILE = path.join(DATA_DIRECTORY, "scheduled-tasks.json");
+const MIN_RECURRENCE_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_PENDING_RECURRING_REMINDERS = 20;
 
 let tasks = [];
 let initialized = false;
 let executionTimer = null;
+
+function validateTaskContent(title, description) {
+    if (
+        typeof title !== "string" ||
+        !title.trim() ||
+        title.length > 120
+    ) {
+        throw new Error("Task title must contain 1 to 120 characters.");
+    }
+
+    if (
+        typeof description !== "string" ||
+        !description.trim() ||
+        description.length > 1000
+    ) {
+        throw new Error("Task description must contain 1 to 1000 characters.");
+    }
+
+    return {
+        title: title.trim(),
+        description: description.trim()
+    };
+}
+
+function getNextCronRun(cronExpression, timeZone, currentDate = new Date()) {
+    if (
+        typeof cronExpression !== "string" ||
+        cronExpression.trim().length > 100 ||
+        cronExpression.trim().split(/\s+/).length !== 5
+    ) {
+        throw new Error("Recurring schedule must use a five-field cron expression.");
+    }
+
+    if (
+        typeof timeZone !== "string" ||
+        !timeZone.trim() ||
+        timeZone.trim().length > 100
+    ) {
+        throw new Error("Recurring schedule requires a valid IANA timezone.");
+    }
+
+    const normalizedExpression = cronExpression.trim();
+    const normalizedTimeZone = timeZone.trim();
+
+    try {
+        new Intl.DateTimeFormat("en-US", {
+            timeZone: normalizedTimeZone
+        }).format(currentDate);
+    } catch {
+        throw new Error("Recurring schedule requires a valid IANA timezone.");
+    }
+
+    try {
+        const expression = CronExpressionParser.parse(normalizedExpression, {
+            currentDate,
+            tz: normalizedTimeZone
+        });
+        const nextRun = expression.next().toDate();
+        const followingRun = expression.next().toDate();
+
+        if (
+            followingRun.getTime() - nextRun.getTime() <
+            MIN_RECURRENCE_INTERVAL_MS
+        ) {
+            throw new Error(
+                "Recurring reminders must be at least five minutes apart."
+            );
+        }
+
+        return nextRun;
+    } catch (error) {
+        if (error.message.includes("at least five minutes")) throw error;
+        throw new Error("Recurring schedule must be a valid five-field cron expression.");
+    }
+}
 
 async function saveTasks() {
     await fs.mkdir(DATA_DIRECTORY, { recursive: true });
@@ -77,21 +155,7 @@ function startScheduler() {
 async function createTask({ title, description, runAt }) {
     await initializeScheduler();
 
-    if (
-        typeof title !== "string" ||
-        !title.trim() ||
-        title.length > 120
-    ) {
-        throw new Error("Task title must contain 1 to 120 characters.");
-    }
-
-    if (
-        typeof description !== "string" ||
-        !description.trim() ||
-        description.length > 1000
-    ) {
-        throw new Error("Task description must contain 1 to 1000 characters.");
-    }
+    const taskContent = validateTaskContent(title, description);
 
     if (
         typeof runAt !== "string" ||
@@ -112,8 +176,7 @@ async function createTask({ title, description, runAt }) {
 
     const task = {
         id: crypto.randomUUID(),
-        title: title.trim(),
-        description: description.trim(),
+        ...taskContent,
         actionType: "reminder",
         runAt: executionTime.toISOString(),
         status: "pending",
@@ -124,6 +187,50 @@ async function createTask({ title, description, runAt }) {
         result: null,
         lastError: null,
         reminderAcknowledgedAt: null
+    };
+
+    tasks.push(task);
+    await saveTasks();
+
+    return task;
+}
+
+async function createRecurringTask({
+    title,
+    description,
+    cronExpression,
+    timeZone
+}) {
+    await initializeScheduler();
+
+    const taskContent = validateTaskContent(title, description);
+    const normalizedExpression =
+        typeof cronExpression === "string" ? cronExpression.trim() : "";
+    const normalizedTimeZone =
+        typeof timeZone === "string" ? timeZone.trim() : "";
+    const nextRun = getNextCronRun(
+        normalizedExpression,
+        normalizedTimeZone
+    );
+
+    const task = {
+        id: crypto.randomUUID(),
+        ...taskContent,
+        actionType: "reminder",
+        recurrence: {
+            cronExpression: normalizedExpression,
+            timeZone: normalizedTimeZone
+        },
+        runAt: nextRun.toISOString(),
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        executedAt: null,
+        executionAttempts: 0,
+        nextAttemptAt: null,
+        result: null,
+        lastError: null,
+        pendingReminders: [],
+        missedReminderCount: 0
     };
 
     tasks.push(task);
@@ -179,23 +286,53 @@ function executeScheduledAction(task) {
 async function getPendingReminders() {
     await initializeScheduler();
 
-    return tasks
-        .filter(task =>
+    const reminders = [];
+
+    for (const task of tasks) {
+        if (task.recurrence) {
+            for (const reminder of task.pendingReminders || []) {
+                reminders.push({
+                    taskId: reminder.id,
+                    scheduledTaskId: task.id,
+                    title: reminder.title,
+                    message: reminder.message,
+                    executedAt: reminder.executedAt
+                });
+            }
+        } else if (
             task.status === "completed" &&
             (task.actionType || "reminder") === "reminder" &&
             task.result?.type === "reminder" &&
             !task.reminderAcknowledgedAt
-        )
-        .map(task => ({
-            taskId: task.id,
-            title: task.result.title,
-            message: task.result.message,
-            executedAt: task.executedAt
-        }));
+        ) {
+            reminders.push({
+                taskId: task.id,
+                title: task.result.title,
+                message: task.result.message,
+                executedAt: task.executedAt
+            });
+        }
+    }
+
+    return reminders;
 }
 
 async function acknowledgeReminder(taskId) {
     await initializeScheduler();
+
+    const recurringTask = tasks.find(task =>
+        Array.isArray(task.pendingReminders) &&
+        task.pendingReminders.some(reminder => reminder.id === taskId)
+    );
+
+    if (recurringTask) {
+        recurringTask.pendingReminders =
+            recurringTask.pendingReminders.filter(
+                reminder => reminder.id !== taskId
+            );
+        await saveTasks();
+        return { success: true };
+    }
 
     const task = tasks.find(item =>
         item.id === taskId &&
@@ -228,7 +365,7 @@ async function executeDueTasks() {
         (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= now)
     );
 
-    const completedTasks = [];
+    const executedTasks = [];
 
     for (const task of dueTasks) {
         const previousAttempts = task.executionAttempts || 0;
@@ -248,9 +385,38 @@ async function executeDueTasks() {
             task.result = executeScheduledAction(task);
             task.executedAt = new Date().toISOString();
             task.nextAttemptAt = null;
-            task.status = "completed";
+            if (task.recurrence) {
+                const pendingReminders = Array.isArray(task.pendingReminders)
+                    ? task.pendingReminders
+                    : [];
+                pendingReminders.push({
+                    id: crypto.randomUUID(),
+                    title: task.result.title,
+                    message: task.result.message,
+                    executedAt: task.executedAt,
+                    scheduledFor: task.runAt
+                });
+                if (
+                    pendingReminders.length >
+                    MAX_PENDING_RECURRING_REMINDERS
+                ) {
+                    pendingReminders.shift();
+                    task.missedReminderCount =
+                        (task.missedReminderCount || 0) + 1;
+                }
+                task.pendingReminders = pendingReminders;
+                task.runAt = getNextCronRun(
+                    task.recurrence.cronExpression,
+                    task.recurrence.timeZone,
+                    new Date()
+                ).toISOString();
+                task.executionAttempts = 0;
+                task.status = "pending";
+            } else {
+                task.status = "completed";
+            }
             await saveTasks();
-            completedTasks.push(task);
+            executedTasks.push(task);
         } catch (error) {
             task.result = null;
             task.executedAt = null;
@@ -277,18 +443,19 @@ async function executeDueTasks() {
         }
     }
 
-    if (completedTasks.length > 0) {
+    if (executedTasks.length > 0) {
         console.log(
-            `Scheduled ${completedTasks.length} reminder(s) for in-app delivery.`
+            `Scheduled ${executedTasks.length} reminder(s) for in-app delivery.`
         );
     }
 
-    return completedTasks;
+    return executedTasks;
 }
 
 module.exports = {
     initializeScheduler,
     createTask,
+    createRecurringTask,
     getTasks,
     cancelTask,
     executeDueTasks,
