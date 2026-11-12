@@ -91,6 +91,13 @@ Memories are kept only in the Android Room database. Local command phrases invok
 
 **Important:** The only supported scheduled action is creating a reminder result. The backend must be running; Android supports foreground polling and best-effort background notification delivery, not exact-time guarantees. Cron schedules do not run arbitrary actions or execute generated code.
 
+## Performance diagnostics
+
+- The Android client measures each agent request with `SystemClock.elapsedRealtime()` and samples process proportional set size (PSS) when the response is displayed. These values appear below the assistant response; PSS is a point-in-time process estimate, not peak memory.
+- The backend records scheduled execution delay as the elapsed milliseconds from the requested run time to completion. The value is persisted and returned with reminder results.
+- These are per-event diagnostics, not an aggregate benchmark. Live Gemini latency and physical-device memory measurements have not been collected in this validation pass.
+- The lexical memory ranker currently scans saved memories in memory. If the collection grows substantially, Room full-text search or a persisted token index is the next optimization to evaluate.
+
 ## Voice input
 
 The Compose control requests microphone permission only after a user tap. Speech recognition is a one-shot foreground interaction; the recognized text remains editable before submission. Permission denial, unavailable recognition, cancellation, silence, and recognition service errors are surfaced in the UI. No recording is saved. Actual speech availability depends on the emulator/device recognition service and was not verified in the current test pass.

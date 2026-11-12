@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Debug
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -50,7 +51,10 @@ data class ChatMessage(
     val toolName: String? = null,
     val toolStatus: String? = null,
     val emailDrafts: List<EmailDraft> = emptyList(),
-    val browserUrl: String? = null
+    val browserUrl: String? = null,
+    val schedulerDelayMs: Long? = null,
+    val requestDurationMs: Long? = null,
+    val processPssKb: Int? = null
 )
 
 class MainActivity : ComponentActivity() {
@@ -157,7 +161,8 @@ fun AgentScreen() {
                                 text = "**Reminder: ${reminder.title}**\n\n${reminder.message}",
                                 isUser = false,
                                 toolName = "scheduled_reminder",
-                                toolStatus = "success"
+                                toolStatus = "success",
+                                schedulerDelayMs = reminder.executionDelayMs
                             )
                         )
                     }
@@ -522,7 +527,11 @@ fun AgentScreen() {
                     toolName = result.toolName,
                     toolStatus = result.status,
                     emailDrafts = result.emailDrafts,
-                    browserUrl = result.browserUrl
+                    browserUrl = result.browserUrl,
+                    requestDurationMs = result.requestDurationMs,
+                    processPssKb = result.requestDurationMs?.let {
+                        currentProcessPssKb()
+                    }
                 )
             )
 
@@ -640,6 +649,12 @@ fun AgentScreen() {
             }
         }
     }
+}
+
+private fun currentProcessPssKb(): Int {
+    val memoryInfo = Debug.MemoryInfo()
+    Debug.getMemoryInfo(memoryInfo)
+    return memoryInfo.totalPss
 }
 
 @Composable
@@ -783,6 +798,33 @@ internal fun ChatMessageList(
                             ) {
                                 Text("Open page in browser")
                             }
+                        }
+
+                        message.requestDurationMs?.let { durationMs ->
+                            Text(
+                                text = "Agent request: ${durationMs} ms" +
+                                    (message.processPssKb?.let { " · App PSS: $it KB" } ?: ""),
+                                modifier = Modifier.padding(
+                                    start = 14.dp,
+                                    end = 14.dp,
+                                    bottom = 8.dp
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+
+                        message.schedulerDelayMs?.let { delayMs ->
+                            Text(
+                                text = "Scheduler delay: $delayMs ms",
+                                modifier = Modifier.padding(
+                                    start = 14.dp,
+                                    end = 14.dp,
+                                    bottom = 8.dp
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
                         }
 
                         if (

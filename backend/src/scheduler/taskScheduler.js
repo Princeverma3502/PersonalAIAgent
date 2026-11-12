@@ -183,6 +183,7 @@ async function createTask({ title, description, runAt }) {
         createdAt: new Date().toISOString(),
         executedAt: null,
         executionAttempts: 0,
+        executionDelayMs: null,
         nextAttemptAt: null,
         result: null,
         lastError: null,
@@ -226,6 +227,7 @@ async function createRecurringTask({
         createdAt: new Date().toISOString(),
         executedAt: null,
         executionAttempts: 0,
+        executionDelayMs: null,
         nextAttemptAt: null,
         result: null,
         lastError: null,
@@ -296,7 +298,8 @@ async function getPendingReminders() {
                     scheduledTaskId: task.id,
                     title: reminder.title,
                     message: reminder.message,
-                    executedAt: reminder.executedAt
+                    executedAt: reminder.executedAt,
+                    executionDelayMs: reminder.executionDelayMs
                 });
             }
         } else if (
@@ -309,7 +312,8 @@ async function getPendingReminders() {
                 taskId: task.id,
                 title: task.result.title,
                 message: task.result.message,
-                executedAt: task.executedAt
+                executedAt: task.executedAt,
+                executionDelayMs: task.executionDelayMs
             });
         }
     }
@@ -383,7 +387,12 @@ async function executeDueTasks() {
 
         try {
             task.result = executeScheduledAction(task);
-            task.executedAt = new Date().toISOString();
+            const executedAt = new Date();
+            task.executedAt = executedAt.toISOString();
+            task.executionDelayMs = Math.max(
+                0,
+                executedAt.getTime() - new Date(task.runAt).getTime()
+            );
             task.nextAttemptAt = null;
             if (task.recurrence) {
                 const pendingReminders = Array.isArray(task.pendingReminders)
@@ -394,7 +403,8 @@ async function executeDueTasks() {
                     title: task.result.title,
                     message: task.result.message,
                     executedAt: task.executedAt,
-                    scheduledFor: task.runAt
+                    scheduledFor: task.runAt,
+                    executionDelayMs: task.executionDelayMs
                 });
                 if (
                     pendingReminders.length >
@@ -420,6 +430,7 @@ async function executeDueTasks() {
         } catch (error) {
             task.result = null;
             task.executedAt = null;
+            task.executionDelayMs = null;
             task.lastError = "Scheduled reminder execution failed.";
 
             if (task.executionAttempts < 3) {

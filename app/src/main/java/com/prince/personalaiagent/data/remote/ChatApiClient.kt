@@ -1,6 +1,7 @@
 ﻿
 package com.prince.personalaiagent.data.remote
 
+import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -15,7 +16,8 @@ data class AgentResponse(
     val status: String,
     val toolName: String?,
     val emailDrafts: List<EmailDraft> = emptyList(),
-    val browserUrl: String? = null
+    val browserUrl: String? = null,
+    val requestDurationMs: Long? = null
 )
 
 data class EmailDraft(
@@ -27,7 +29,8 @@ data class EmailDraft(
 data class AgentReminder(
     val taskId: String,
     val title: String,
-    val message: String
+    val message: String,
+    val executionDelayMs: Long? = null
 )
 
 class AgentApiException(
@@ -71,7 +74,11 @@ class ChatApiClient {
                 AgentReminder(
                     taskId = taskId,
                     title = reminder.optString("title", "Reminder"),
-                    message = reminder.optString("message", "")
+                    message = reminder.optString("message", ""),
+                    executionDelayMs = reminder.optLong(
+                        "executionDelayMs",
+                        -1
+                    ).takeIf { it >= 0 }
                 )
             }
         } finally {
@@ -130,6 +137,7 @@ class ChatApiClient {
         message: String,
         memories: List<String> = emptyList()
     ): AgentResponse {
+        val requestStartedAt = SystemClock.elapsedRealtime()
 
         val connection = URL(BASE_URL)
             .openConnection() as HttpURLConnection
@@ -223,7 +231,8 @@ class ChatApiClient {
                 status = status,
                 toolName = toolName,
                 emailDrafts = emailDrafts,
-                browserUrl = browserUrl
+                browserUrl = browserUrl,
+                requestDurationMs = SystemClock.elapsedRealtime() - requestStartedAt
             )
 
             if (responseCode !in 200..299) {

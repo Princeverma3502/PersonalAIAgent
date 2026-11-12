@@ -123,6 +123,12 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
             message: "This test runs only in its temporary storage."
         });
         assert.equal((await scheduler.getPendingReminders()).length, 1);
+        assert.ok(Number.isInteger(dueTasks[0].executionDelayMs));
+        assert.ok(dueTasks[0].executionDelayMs >= 0);
+        assert.equal(
+            (await scheduler.getPendingReminders())[0].executionDelayMs,
+            dueTasks[0].executionDelayMs
+        );
         assert.equal(
             (await scheduler.acknowledgeReminder(task.id)).success,
             true
@@ -244,6 +250,8 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
         assert.equal(reminders.length, 1);
         assert.equal(reminders[0].scheduledTaskId, task.id);
         assert.equal(reminders[0].message, task.description);
+        assert.ok(Number.isInteger(reminders[0].executionDelayMs));
+        assert.ok(reminders[0].executionDelayMs >= 0);
         const restartedScheduler = await compileScheduler(directory);
         assert.equal(
             (await restartedScheduler.getPendingReminders())[0].taskId,

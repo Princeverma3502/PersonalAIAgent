@@ -12,6 +12,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
 - Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - JSON-backed one-time and recurring reminders with in-app delivery and best-effort Android background notifications.
+- In-chat agent request timing and process-memory diagnostics, plus scheduled reminder delay measurements.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
 ## Architecture
