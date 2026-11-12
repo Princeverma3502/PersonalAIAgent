@@ -10,7 +10,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation; drafts are shown for review and are never sent.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
-- JSON-backed one-time and recurring in-app reminders with create, list, cancel, execution results, and delivery while the chat screen is open.
+- JSON-backed one-time and recurring reminders with in-app delivery and best-effort Android background notifications.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
 ## Architecture
@@ -101,7 +101,7 @@ Returns due in-app reminders that have not yet been acknowledged by the Android 
 
 ### `POST /api/reminders/:taskId/ack`
 
-Acknowledges a reminder after the Android app displays it. The app polls while its chat screen is open and uses the task ID to avoid duplicate display in the same process.
+Acknowledges a reminder after the Android app displays it or posts its system notification. The app polls every 30 seconds while its chat screen is open. WorkManager also checks at startup and periodically (Android's 15-minute minimum), subject to network availability and notification permission.
 
 ## Tests
 
@@ -123,7 +123,7 @@ Screenshots are not included yet.
 
 ## Known limitations
 
-- Scheduled tasks support one-time and recurring in-app reminders only. The backend must remain running, and the app displays due reminders while open; there are no Android system notifications, background workers, or arbitrary scheduled actions.
+- Scheduled tasks support one-time and recurring reminders only. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. These schedules do not execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
 - Email is draft-only: no Gmail/OAuth provider, sending, or email search is configured. Drafts are not sent.
 - Browser access is read-only and limited to explicit public URLs; page interaction, authentication, and browser automation are not implemented.

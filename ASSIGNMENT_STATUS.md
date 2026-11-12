@@ -9,7 +9,7 @@
 - Room-backed local memories with save, list, search, single-delete, and confirmed delete-all flows.
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
-- JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, and in-app polling/acknowledgement.
+- JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
 - Validated email draft preparation with deterministic user-visible content and an explicit not-sent status.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
@@ -17,7 +17,7 @@
 
 ## Partially completed
 
-- **Scheduled reminders:** one-time and recurring reminder results are durable, but delivery requires the backend and chat screen to be running/open. Android system notifications and background delivery are not implemented.
+- **Scheduled reminders:** one-time and recurring reminder results are durable. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. The backend must be reachable and notification permission granted for background notifications.
 - **Gemini integration:** fallback and tool recovery are covered with mocks; a successful live Gemini request was not verified.
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
 - **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
@@ -31,7 +31,7 @@
 - Gmail/OAuth provider integration, email sending, and email search. Drafts are local-only and never sent.
 - Interactive browser automation, authentication, and page actions such as clicking, scrolling, or submitting forms.
 - Actual execution of arbitrary scheduled actions or recurring workflows.
-- Android system notifications or background reminder delivery.
+- Arbitrary scheduled workflows/actions beyond reminders.
 - Production authentication, HTTPS deployment, and configurable Android API environments.
 - Screenshots.
 
@@ -46,6 +46,7 @@
 | Public webpage retrieval | Tests pass for URL/IP restrictions, redirect validation, text extraction, search, and tool registration. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, and repeated execution check. |
 | Recurring scheduler behavior | Isolated tests pass for five-field cron validation, minimum interval, IANA timezone, persistence, next-run advancement, reminder acknowledgement, and cancellation. |
+| Android background reminders | `.\gradlew.bat testDebugUnitTest assembleDebug` verifies WorkManager integration compiles and packages; no device notification or Doze-mode test has been completed. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |
@@ -55,9 +56,9 @@
 
 ## Known limitations and risks
 
-- Scheduled task actions are limited to durable in-app reminder records; no Android notification or background delivery exists.
+- Scheduled task actions are limited to durable reminder records; Android notifications are best-effort and may be delayed by OS policy.
 - Recurrence is limited to reminders and at least five minutes apart. It does not run workflows, and the backend process must be alive at execution time.
-- Reminder delivery requires the app/chat screen to be open and polling the backend.
+- Reminder delivery requires the backend to be running and reachable. Background delivery also requires notification permission and is subject to Android scheduling and battery policies.
 - Speech recognition depends on device service availability and has not been exercised on an emulator.
 - The backend has no authentication and the Android development client uses cleartext HTTP.
 - Room migration behavior has not been exercised.

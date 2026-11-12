@@ -86,10 +86,10 @@ Memories are kept only in the Android Room database. Local command phrases invok
 2. The scheduler validates task text and schedule syntax; recurring schedules must be at least five minutes apart.
 3. Task records are written to JSON using a temporary file followed by rename. Recurring records retain their cron expression, timezone, and next execution time.
 4. The scheduler checks for due reminders every five seconds. It persists an `executing` state and reminder result; one-time tasks become completed, while recurring tasks advance to their next cron occurrence and stay pending. Interrupted tasks are re-queued at startup; action failures retry with bounded backoff.
-5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds, displays each reminder ID once per app process, and acknowledges it with `POST /api/reminders/:taskId/ack`. At most 20 unacknowledged occurrences are retained per recurring task.
+5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds. Unique WorkManager work also checks at app startup and periodically with a network constraint; periodic work uses Android's 15-minute minimum interval and can be delayed by battery policies. It posts a system notification and acknowledges only after posting. If notification permission is unavailable, the reminder remains pending. At most 20 unacknowledged occurrences are retained per recurring task.
 6. Cancellation stops future occurrences of a pending recurring task; unknown or non-pending task IDs return failure.
 
-**Important:** The only supported scheduled action is creating an in-app reminder result. The backend must be running, and Android delivery is foreground polling only. There are no Android system notifications or background workers. Cron schedules do not run arbitrary actions or execute generated code.
+**Important:** The only supported scheduled action is creating a reminder result. The backend must be running; Android supports foreground polling and best-effort background notification delivery, not exact-time guarantees. Cron schedules do not run arbitrary actions or execute generated code.
 
 ## Voice input
 
