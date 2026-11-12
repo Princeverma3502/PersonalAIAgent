@@ -13,7 +13,7 @@
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
 - Validated email draft preparation, with user-initiated handoff to a compatible email app; the agent never sends.
-- Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
+- Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search; batch reads support up to three distinct, user-provided URLs per request.
 - One-time and recurring scheduled public-webpage summaries for exact URLs supplied by the user; page retrieval and Gemini summarization run at the scheduled time and deliver results through reminders.
 - Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - Per-request agent latency and process PSS diagnostics, plus persisted scheduler delay measurements.
@@ -29,7 +29,7 @@
 - **Android runtime:** Kotlin compilation, unit tests, debug and release APK packaging, and five emulator instrumentation tests passed. Speech-recognition and full interactive feature testing remain incomplete.
 - **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
-- **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
+- **Web browsing:** the agent can read one URL or a batch of up to three distinct public URLs, provided every URL is explicitly included in the user's request; retrieval is bounded and read-only. The in-app browser remains user-controlled. The agent cannot click controls, submit forms, authenticate, or autonomously discover links.
 - **Scheduled workflow scope:** webpage summaries are supported only for explicit public URLs; email checks and other arbitrary actions are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
@@ -46,10 +46,10 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 36 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
+| `npm --prefix backend test` | Passed: 39 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
-| Public webpage retrieval | Tests pass for URL/IP restrictions, redirect validation, text extraction, search, and tool registration. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
+| Public webpage retrieval | Tests cover URL/IP restrictions, redirect validation, text extraction, search, exact user-provided URL enforcement, and batches of up to three distinct pages without a follow-up tool round. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, repeated execution check, and due-to-execution delay recording. |
 | Recurring scheduler behavior | Isolated tests pass for five-field cron validation, minimum interval, IANA timezone, persistence, next-run advancement, reminder acknowledgement, and cancellation. |
 | Scheduled webpage summaries | Mock tests pass for page retrieval followed by tool-free summarization, retrieval failure handling, explicit-URL enforcement, workflow validation, one-time and recurring execution, result/source delivery, and acknowledgement. |
@@ -78,7 +78,7 @@
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
 - Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
-- Backend webpage retrieval requires the exact URL in the user's message; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.
+- Backend webpage retrieval requires every exact URL in the user's message and limits each batch to three distinct pages; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.
 - Browser URL policy tests cover HTTPS normalization and blocking non-web schemes and embedded credentials. Device-level WebView behavior remains untested.
 - The local benchmark uses mocked model responses and excludes real provider/network latency; live Gemini latency and target-device PSS measurements remain to be collected.
 

@@ -71,6 +71,7 @@ The registry exposes:
 - `cancel_scheduled_task`
 - `draft_email`
 - `read_public_webpage`
+- `read_public_webpages`
 - `create_scheduled_webpage_summary`
 - `create_recurring_webpage_summary`
 
@@ -78,7 +79,7 @@ Each tool has a schema and a local argument validator. Handlers can report failu
 
 `draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim with an explicit “NOT SENT” label. The Android client can open it in a compatible email app using a user-initiated chooser. The app only prepopulates the external compose screen; the user must review and tap that app's send control. There is no Gmail/OAuth provider, agent-side send tool, or email search configured.
 
-`read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. Successful results can be opened in an Android WebView; the user can navigate, scroll, and extract up to 10,000 characters of visible text. The WebView rejects non-HTTP(S) navigation, disables file/content access and mixed content, and exposes no JavaScript bridge. The agent still cannot click controls, submit forms, or authenticate.
+`read_public_webpage` requires the exact URL to appear in the user's message. `read_public_webpages` applies the same requirement to each of up to three distinct URLs and reads them sequentially. Both tools share the same HTTP(S)-only policy on standard ports, private/special IP rejection, public DNS pinning, redirect validation, and request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. Page results are returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. Successful results can be opened in an Android WebView; the user can navigate, scroll, and extract up to 10,000 characters of visible text. The WebView rejects non-HTTP(S) navigation, disables file/content access and mixed content, and exposes no JavaScript bridge. The agent still cannot click controls, submit forms, or authenticate.
 
 Scheduled webpage summary tools require the exact public URL in the user's request. At the due time, `scheduledWorkflowService.js` uses the same bounded public-page retrieval and sends the retrieved title and text to Gemini as untrusted source data in a separate request with no tools. The resulting concise summary and source URL are delivered through the existing reminder endpoint and Android notification path. Page content cannot trigger additional tool calls. This workflow does not check email, follow page instructions, or perform arbitrary actions; the backend must be running when the task is due.
 

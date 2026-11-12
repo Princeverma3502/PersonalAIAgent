@@ -10,7 +10,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Room-backed conversation history that restores after app restarts and can be cleared separately from saved memories.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation with an explicit handoff to an installed email app; the agent never sends email.
-- Read-only public webpage retrieval and optional text search for URLs supplied by the user.
+- Read-only public webpage retrieval (single page or batches of up to three) and optional text search for URLs supplied by the user.
 - Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - JSON-backed one-time and recurring reminders, plus scheduled one-time or recurring public-webpage summaries, with in-app delivery and best-effort Android background notifications.
 - In-chat agent request timing and process-memory diagnostics, plus scheduled reminder delay measurements.
@@ -110,7 +110,7 @@ Agent endpoint used by Android. `memories` is optional and contains short string
 
 Responses include `success`, `reply`, and `status`. Agent responses also include `toolCall` for compatibility and `toolCalls` for the execution history.
 
-The agent can use `read_public_webpage` when the user includes a complete public HTTP(S) URL. It returns the page title and bounded readable text, with an optional phrase search. It does not click, submit forms, authenticate, or automate page controls.
+The agent can use `read_public_webpage` for one complete public HTTP(S) URL, or `read_public_webpages` for up to three distinct URLs all explicitly included in the user's message. Both return page titles and bounded readable text. Retrieval is read-only: it does not click, submit forms, authenticate, or automate page controls, and retrieved page text cannot trigger follow-up tool calls.
 
 Recurring reminder requests use a five-field cron expression and the Android device's IANA timezone. For scheduled webpage summaries, the user must provide the exact public HTTP(S) URL; one-time and recurring summaries fetch that page when due and use Gemini to summarize its content. The workflow is read-only and does not check email, follow page instructions, or perform other actions. The backend must be running when the task is due.
 

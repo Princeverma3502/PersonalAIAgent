@@ -305,6 +305,110 @@ test("agent tool and provider error handling", async t => {
         assert.match(result.reply, /exact public webpage URL/);
     });
 
+    await t.test("reads a bounded batch of explicitly provided webpages without another tool round", async () => {
+        const originalHandler =
+            TOOL_REGISTRY.read_public_webpages.handler;
+        TOOL_REGISTRY.read_public_webpages.handler = async ({ urls }) => ({
+            success: true,
+            pages: urls.map((url, index) => ({
+                success: true,
+                url,
+                title: `Page ${index + 1}`,
+                text: `Content ${index + 1}.`
+            }))
+        });
+
+        try {
+            let requestCount = 0;
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "read_public_webpages",
+                    args: {
+                        urls: [
+                            "https://example.com/",
+                            "https://example.org/about"
+                        ]
+                    }
+                }]),
+                functionCallResponse([{
+                    name: "cancel_scheduled_task",
+                    args: { taskId: "valid" }
+                }])
+            ], () => {
+                requestCount += 1;
+            });
+
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Compare https://example.com/ with https://example.org/about"
+            );
+
+            assert.equal(requestCount, 1);
+            assert.equal(result.success, true);
+            assert.equal(result.toolCalls.length, 1);
+            assert.equal(result.toolCalls[0].name, "read_public_webpages");
+            assert.match(result.reply, /Read-only webpage 1: Page 1/);
+            assert.match(result.reply, /URL: https:\/\/example\.com\//);
+            assert.match(result.reply, /Content 1\./);
+            assert.match(result.reply, /Read-only webpage 2: Page 2/);
+            assert.match(result.reply, /URL: https:\/\/example\.org\/about/);
+            assert.match(result.reply, /Content 2\./);
+        } finally {
+            TOOL_REGISTRY.read_public_webpages.handler = originalHandler;
+        }
+    });
+
+    await t.test("rejects a webpage batch containing any URL not supplied by the user", async () => {
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "read_public_webpages",
+                args: {
+                    urls: [
+                        "https://example.com/",
+                        "https://example.org/"
+                    ]
+                }
+            }]),
+            { text: "Both pages were read." }
+        ]);
+
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Read https://example.com/"
+        );
+
+        assert.equal(result.success, false);
+        assert.equal(result.toolCalls[0].status, "failed");
+        assert.match(result.reply, /provide every exact public webpage URL/);
+    });
+
+    await t.test("enforces distinct safe webpage URLs and a three-page maximum", () => {
+        const validate = TOOL_REGISTRY.read_public_webpages.validateArgs;
+
+        assert.equal(validate({ urls: ["https://example.com/"] }), true);
+        assert.equal(validate({
+            urls: [
+                "https://example.com/",
+                "https://example.org/",
+                "https://example.net/"
+            ]
+        }), true);
+        assert.equal(validate({
+            urls: [
+                "https://example.com/",
+                "https://example.org/",
+                "https://example.net/",
+                "https://example.edu/"
+            ]
+        }), false);
+        assert.equal(validate({
+            urls: ["https://example.com/", "https://example.com/"]
+        }), false);
+        assert.equal(validate({ urls: ["http://127.0.0.1/"] }), false);
+    });
+
     await t.test("does not give webpage content another tool-execution round", async () => {
         const originalHandler =
             TOOL_REGISTRY.read_public_webpage.handler;

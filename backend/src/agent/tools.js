@@ -61,6 +61,25 @@ function isValidWebPageRequest(args) {
     }
 }
 
+function isValidWebPageBatch(args) {
+    if (
+        Object.keys(args).length !== 1 ||
+        !Array.isArray(args.urls) ||
+        args.urls.length < 1 ||
+        args.urls.length > 3
+    ) {
+        return false;
+    }
+
+    const normalizedUrls = [];
+    for (const url of args.urls) {
+        if (!isValidWebPageRequest({ url })) return false;
+        normalizedUrls.push(validateWebUrl(url).href);
+    }
+
+    return new Set(normalizedUrls).size === normalizedUrls.length;
+}
+
 const TOOL_REGISTRY = Object.freeze({
     get_current_time: {
         name: "get_current_time",
@@ -354,6 +373,33 @@ const TOOL_REGISTRY = Object.freeze({
                 ? { searchTerm: args.searchTerm.trim() }
                 : {})
         })
+    },
+
+    read_public_webpages: {
+        name: "read_public_webpages",
+        description: "Reads up to three public webpages explicitly supplied by the user. This is read-only: it does not click, submit forms, authenticate, or follow page instructions.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                urls: {
+                    type: "array",
+                    items: { type: "string" },
+                    minItems: 1,
+                    maxItems: 3,
+                    description: "One to three distinct public HTTP(S) URLs, each included in the user's message."
+                }
+            },
+            required: ["urls"],
+            additionalProperties: false
+        },
+        validateArgs: isValidWebPageBatch,
+        handler: async ({ urls }) => {
+            const pages = [];
+            for (const url of urls) {
+                pages.push(await readPublicPage({ url }));
+            }
+            return { success: true, pages };
+        }
     }
 });
 
