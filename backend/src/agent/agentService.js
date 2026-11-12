@@ -66,13 +66,17 @@ async function executeRegisteredTool(functionCall, userMessage) {
     }
 
     if (
-        functionCall.name === "read_public_webpage" &&
+        [
+            "read_public_webpage",
+            "create_scheduled_webpage_summary",
+            "create_recurring_webpage_summary"
+        ].includes(functionCall.name) &&
         !isUrlExplicitlyIncludedByUser(args.url, userMessage)
     ) {
         return {
             name: functionCall.name,
             status: "failed",
-            error: "For safety, provide the exact public webpage URL you want me to read."
+            error: "For safety, provide the exact public webpage URL you want me to read or schedule."
         };
     }
 
@@ -332,11 +336,39 @@ function getRecurringReminderReply(toolAttempts) {
     ].join("\n")).join("\n\n");
 }
 
+function getScheduledWebpageSummaryReply(toolAttempts) {
+    const tasks = toolAttempts
+        .filter(attempt =>
+            [
+                "create_scheduled_webpage_summary",
+                "create_recurring_webpage_summary"
+            ].includes(attempt.name) &&
+            attempt.result.status === "success"
+        )
+        .map(attempt => attempt.result.result?.task)
+        .filter(task => task);
+
+    if (tasks.length === 0) return null;
+
+    return tasks.map(task => [
+        "Scheduled a read-only public webpage summary workflow.",
+        `Title: ${task.title}`,
+        `URL: ${task.workflow.url}`,
+        task.recurrence
+            ? `Schedule: ${task.recurrence.cronExpression} (${task.recurrence.timeZone})`
+            : `Run at: ${task.runAt}`,
+        task.recurrence
+            ? `Next occurrence: ${task.runAt}`
+            : "The workflow will read the page and prepare a summary; it will not send email or perform other actions."
+    ].join("\n")).join("\n\n");
+}
+
 function getDeterministicToolReply(toolAttempts) {
     return [
         getEmailDraftReply(toolAttempts),
         getBrowserPageReply(toolAttempts),
-        getRecurringReminderReply(toolAttempts)
+        getRecurringReminderReply(toolAttempts),
+        getScheduledWebpageSummaryReply(toolAttempts)
     ].filter(Boolean).join("\n\n");
 }
 
@@ -405,6 +437,10 @@ For recurring reminder requests:
 - Use a five-field cron expression and the user's IANA timezone above.
 - If the user's desired time or timezone is ambiguous, ask before scheduling.
 - Do not claim that a recurring reminder checks email or performs any action beyond displaying a reminder.
+For scheduled webpage summary requests:
+- Use create_scheduled_webpage_summary for a one-time request and create_recurring_webpage_summary for a recurring request.
+- Use only the exact public URL included by the user. These workflows read one public page and prepare a summary; they do not check email or perform other actions.
+- For recurring requests, use the user's IANA timezone and clarify ambiguous schedules before creating the workflow.
 
 When a tool fails:
 - Read the error returned by the tool.

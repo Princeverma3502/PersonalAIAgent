@@ -12,6 +12,79 @@ const MAX_PENDING_RECURRING_REMINDERS = 20;
 let tasks = [];
 let initialized = false;
 let executionTimer = null;
+let webpageSummaryExecutor = null;
+
+function setWebpageSummaryExecutor(executor) {
+    if (typeof executor !== "function") {
+        throw new Error("Scheduled webpage workflow executor must be a function.");
+    }
+
+    webpageSummaryExecutor = executor;
+}
+
+function validateScheduledAction(actionType, workflow) {
+    if (actionType === undefined || actionType === "reminder") {
+        if (workflow !== undefined) {
+            throw new Error("Reminder tasks cannot include a workflow.");
+        }
+        return { actionType: "reminder" };
+    }
+
+    if (actionType !== "webpage_summary") {
+        throw new Error("Unsupported scheduled action.");
+    }
+
+    if (
+        !workflow ||
+        typeof workflow !== "object" ||
+        Array.isArray(workflow) ||
+        typeof workflow.url !== "string" ||
+        workflow.url.length > 2048
+    ) {
+        throw new Error("Scheduled webpage workflow requires a URL.");
+    }
+
+    let url;
+    try {
+        url = new URL(workflow.url);
+    } catch {
+        throw new Error("Scheduled webpage workflow requires a valid HTTP(S) URL.");
+    }
+
+    if (
+        !["http:", "https:"].includes(url.protocol) ||
+        !url.hostname ||
+        url.username ||
+        url.password ||
+        (url.port && !(
+            (url.protocol === "http:" && url.port === "80") ||
+            (url.protocol === "https:" && url.port === "443")
+        ))
+    ) {
+        throw new Error("Scheduled webpage workflow requires a valid HTTP(S) URL.");
+    }
+
+    if (
+        workflow.searchTerm !== undefined &&
+        (
+            typeof workflow.searchTerm !== "string" ||
+            !workflow.searchTerm.trim() ||
+            workflow.searchTerm.trim().length > 100
+        )
+    ) {
+        throw new Error("Workflow search terms must contain 1 to 100 characters.");
+    }
+
+    return {
+        actionType,
+        workflow: {
+            url: url.href,
+            ...(workflow.searchTerm
+                ? { searchTerm: workflow.searchTerm.trim() }
+                : {})
+        }
+    };
+}
 
 function validateTaskContent(title, description) {
     if (
@@ -152,10 +225,17 @@ function startScheduler() {
     executionTimer.unref();
 }
 
-async function createTask({ title, description, runAt }) {
+async function createTask({
+    title,
+    description,
+    runAt,
+    actionType,
+    workflow
+}) {
     await initializeScheduler();
 
     const taskContent = validateTaskContent(title, description);
+    const scheduledAction = validateScheduledAction(actionType, workflow);
 
     if (
         typeof runAt !== "string" ||
@@ -177,7 +257,7 @@ async function createTask({ title, description, runAt }) {
     const task = {
         id: crypto.randomUUID(),
         ...taskContent,
-        actionType: "reminder",
+        ...scheduledAction,
         runAt: executionTime.toISOString(),
         status: "pending",
         createdAt: new Date().toISOString(),
@@ -200,11 +280,14 @@ async function createRecurringTask({
     title,
     description,
     cronExpression,
-    timeZone
+    timeZone,
+    actionType,
+    workflow
 }) {
     await initializeScheduler();
 
     const taskContent = validateTaskContent(title, description);
+    const scheduledAction = validateScheduledAction(actionType, workflow);
     const normalizedExpression =
         typeof cronExpression === "string" ? cronExpression.trim() : "";
     const normalizedTimeZone =
@@ -217,7 +300,7 @@ async function createRecurringTask({
     const task = {
         id: crypto.randomUUID(),
         ...taskContent,
-        actionType: "reminder",
+        ...scheduledAction,
         recurrence: {
             cronExpression: normalizedExpression,
             timeZone: normalizedTimeZone
@@ -270,12 +353,35 @@ async function cancelTask(taskId) {
     };
 }
 
-function executeScheduledAction(task) {
+async function executeScheduledAction(task) {
     const actionType = task.actionType || "reminder";
 
-    if (actionType !== "reminder") {
-        throw new Error("Unsupported scheduled action.");
+    if (actionType === "webpage_summary") {
+        if (!webpageSummaryExecutor) {
+            throw new Error("Scheduled webpage workflow executor is unavailable.");
+        }
+
+        const message = await webpageSummaryExecutor(task.workflow);
+        if (typeof message !== "string" || !message.trim()) {
+            throw new Error("Scheduled webpage workflow returned an empty summary.");
+        }
+
+        const source = `Source: ${task.workflow.url}`;
+        const summary = message.trim().slice(
+            0,
+            Math.max(0, 2500 - source.length - 2)
+        );
+
+        return {
+            type: "webpage_summary",
+            taskId: task.id,
+            title: task.title,
+            message: `${summary}\n\n${source}`,
+            sourceUrl: task.workflow.url
+        };
     }
+
+    if (actionType !== "reminder") throw new Error("Unsupported scheduled action.");
 
     return {
         type: "reminder",
@@ -299,13 +405,13 @@ async function getPendingReminders() {
                     title: reminder.title,
                     message: reminder.message,
                     executedAt: reminder.executedAt,
-                    executionDelayMs: reminder.executionDelayMs
+                    executionDelayMs: reminder.executionDelayMs,
+                    sourceUrl: reminder.sourceUrl
                 });
             }
         } else if (
             task.status === "completed" &&
-            (task.actionType || "reminder") === "reminder" &&
-            task.result?.type === "reminder" &&
+            ["reminder", "webpage_summary"].includes(task.result?.type) &&
             !task.reminderAcknowledgedAt
         ) {
             reminders.push({
@@ -313,7 +419,8 @@ async function getPendingReminders() {
                 title: task.result.title,
                 message: task.result.message,
                 executedAt: task.executedAt,
-                executionDelayMs: task.executionDelayMs
+                executionDelayMs: task.executionDelayMs,
+                sourceUrl: task.result.sourceUrl
             });
         }
     }
@@ -341,7 +448,7 @@ async function acknowledgeReminder(taskId) {
     const task = tasks.find(item =>
         item.id === taskId &&
         item.status === "completed" &&
-        item.result?.type === "reminder" &&
+        ["reminder", "webpage_summary"].includes(item.result?.type) &&
         !item.reminderAcknowledgedAt
     );
 
@@ -386,7 +493,7 @@ async function executeDueTasks() {
         }
 
         try {
-            task.result = executeScheduledAction(task);
+            task.result = await executeScheduledAction(task);
             const executedAt = new Date();
             task.executedAt = executedAt.toISOString();
             task.executionDelayMs = Math.max(
@@ -404,7 +511,8 @@ async function executeDueTasks() {
                     message: task.result.message,
                     executedAt: task.executedAt,
                     scheduledFor: task.runAt,
-                    executionDelayMs: task.executionDelayMs
+                    executionDelayMs: task.executionDelayMs,
+                    sourceUrl: task.result.sourceUrl
                 });
                 if (
                     pendingReminders.length >
@@ -431,7 +539,7 @@ async function executeDueTasks() {
             task.result = null;
             task.executedAt = null;
             task.executionDelayMs = null;
-            task.lastError = "Scheduled reminder execution failed.";
+            task.lastError = "Scheduled task execution failed.";
 
             if (task.executionAttempts < 3) {
                 task.status = "pending";
@@ -449,14 +557,14 @@ async function executeDueTasks() {
 
             await saveTasks();
             console.error(
-                `Scheduled reminder ${task.id} failed on attempt ${task.executionAttempts}.`
+                `Scheduled task ${task.id} failed on attempt ${task.executionAttempts}.`
             );
         }
     }
 
     if (executedTasks.length > 0) {
         console.log(
-            `Scheduled ${executedTasks.length} reminder(s) for in-app delivery.`
+            `Scheduled ${executedTasks.length} task result(s) for in-app delivery.`
         );
     }
 
@@ -465,6 +573,7 @@ async function executeDueTasks() {
 
 module.exports = {
     initializeScheduler,
+    setWebpageSummaryExecutor,
     createTask,
     createRecurringTask,
     getTasks,

@@ -8,11 +8,15 @@ const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
 const { runAgentTurn } = require("./agent/agentService");
 const {
+    createScheduledWebpageSummaryExecutor
+} = require("./agent/scheduledWorkflowService");
+const {
     getUserFriendlyGeminiError,
     safeProviderError
 } = require("./agent/geminiError");
 const {
     initializeScheduler,
+    setWebpageSummaryExecutor,
     getPendingReminders,
     acknowledgeReminder
 } = require("./scheduler/taskScheduler");
@@ -28,6 +32,11 @@ const AI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash-lite"
 ];
+
+setWebpageSummaryExecutor(createScheduledWebpageSummaryExecutor({
+    ai,
+    modelList: AI_MODELS
+}));
 
 app.use(helmet());
 

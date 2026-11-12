@@ -11,7 +11,8 @@ Compose UI
                                                     └─ Registered tools
                                                          ├─ JSON scheduler
                                                          ├─ Email draft preparation
-                                                         └─ Read-only public webpage retrieval
+                                                         ├─ Read-only public webpage retrieval
+                                                         └─ Scheduled webpage summarizer
 ```
 
 ## Android architecture
@@ -31,6 +32,7 @@ The current UI and data access are directly hosted by Compose state and reposito
 - `agentService.js` validates the request, builds Gemini context, sends tool declarations, executes returned calls, and continues the model/tool loop for at most five rounds.
 - `tools.js` is the single registry for tool names, descriptions, JSON schemas, argument validation, and handlers.
 - `browserService.js` reads explicitly supplied public URLs using bounded HTTP(S) requests and extracts limited page text.
+- `scheduledWorkflowService.js` retrieves a scheduled public page and asks Gemini for a summary in a separate request without tools.
 - `geminiError.js` extracts provider error details, classifies common errors, redacts common credential patterns in diagnostics, and chooses user-facing messages.
 - `taskScheduler.js` stores scheduled task records in `backend/data/scheduled-tasks.json`.
 
@@ -69,12 +71,16 @@ The registry exposes:
 - `cancel_scheduled_task`
 - `draft_email`
 - `read_public_webpage`
+- `create_scheduled_webpage_summary`
+- `create_recurring_webpage_summary`
 
 Each tool has a schema and a local argument validator. Handlers can report failure with `success: false` or throw; both paths become failed tool calls and their error is sent back to Gemini. The response preserves the complete tool-call history and a compatibility `toolCall` field for the last call.
 
 `draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim with an explicit “NOT SENT” label. The Android client can open it in a compatible email app using a user-initiated chooser. The app only prepopulates the external compose screen; the user must review and tap that app's send control. There is no Gmail/OAuth provider, agent-side send tool, or email search configured.
 
 `read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. Successful results can be opened in an Android WebView; the user can navigate, scroll, and extract up to 10,000 characters of visible text. The WebView rejects non-HTTP(S) navigation, disables file/content access and mixed content, and exposes no JavaScript bridge. The agent still cannot click controls, submit forms, or authenticate.
+
+Scheduled webpage summary tools require the exact public URL in the user's request. At the due time, `scheduledWorkflowService.js` uses the same bounded public-page retrieval and sends the retrieved title and text to Gemini as untrusted source data in a separate request with no tools. The resulting concise summary and source URL are delivered through the existing reminder endpoint and Android notification path. Page content cannot trigger additional tool calls. This workflow does not check email, follow page instructions, or perform arbitrary actions; the backend must be running when the task is due.
 
 ## Memory persistence
 
@@ -85,11 +91,11 @@ Memories are kept only in the Android Room database. Local command phrases invok
 1. A one-time reminder uses a future ISO 8601 `runAt` value with an explicit timezone offset. A recurring reminder uses a five-field cron expression and the Android client's IANA timezone.
 2. The scheduler validates task text and schedule syntax; recurring schedules must be at least five minutes apart.
 3. Task records are written to JSON using a temporary file followed by rename. Recurring records retain their cron expression, timezone, and next execution time.
-4. The scheduler checks for due reminders every five seconds. It persists an `executing` state and reminder result; one-time tasks become completed, while recurring tasks advance to their next cron occurrence and stay pending. Interrupted tasks are re-queued at startup; action failures retry with bounded backoff.
+4. The scheduler checks for due tasks every five seconds. Reminder tasks persist a reminder result. Webpage-summary tasks fetch the configured public page and persist the generated summary and source URL. One-time tasks become completed, while recurring tasks advance to their next cron occurrence and stay pending. Interrupted tasks are re-queued at startup; action failures retry with bounded backoff.
 5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds. Unique WorkManager work also checks at app startup and periodically with a network constraint; periodic work uses Android's 15-minute minimum interval and can be delayed by battery policies. It posts a system notification and acknowledges only after posting. If notification permission is unavailable, the reminder remains pending. At most 20 unacknowledged occurrences are retained per recurring task.
 6. Cancellation stops future occurrences of a pending recurring task; unknown or non-pending task IDs return failure.
 
-**Important:** The only supported scheduled action is creating a reminder result. The backend must be running; Android supports foreground polling and best-effort background notification delivery, not exact-time guarantees. Cron schedules do not run arbitrary actions or execute generated code.
+**Important:** Supported scheduled actions are in-app reminders and read-only public-webpage summaries. The backend must be running; Android supports foreground polling and best-effort background notification delivery, not exact-time guarantees. Cron schedules do not check email, run arbitrary actions, or execute generated code.
 
 ## Performance diagnostics
 

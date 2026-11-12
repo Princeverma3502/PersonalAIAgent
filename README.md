@@ -11,7 +11,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Validated email draft preparation with an explicit handoff to an installed email app; the agent never sends email.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
 - Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
-- JSON-backed one-time and recurring reminders with in-app delivery and best-effort Android background notifications.
+- JSON-backed one-time and recurring reminders, plus scheduled one-time or recurring public-webpage summaries, with in-app delivery and best-effort Android background notifications.
 - In-chat agent request timing and process-memory diagnostics, plus scheduled reminder delay measurements.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
@@ -95,11 +95,11 @@ Responses include `success`, `reply`, and `status`. Agent responses also include
 
 The agent can use `read_public_webpage` when the user includes a complete public HTTP(S) URL. It returns the page title and bounded readable text, with an optional phrase search. It does not click, submit forms, authenticate, or automate page controls.
 
-Recurring reminder requests use a five-field cron expression and the Android device's IANA timezone. They create reminders only; they do not execute email checks or other actions.
+Recurring reminder requests use a five-field cron expression and the Android device's IANA timezone. For scheduled webpage summaries, the user must provide the exact public HTTP(S) URL; one-time and recurring summaries fetch that page when due and use Gemini to summarize its content. The workflow is read-only and does not check email, follow page instructions, or perform other actions. The backend must be running when the task is due.
 
 ### `GET /api/reminders`
 
-Returns due in-app reminders that have not yet been acknowledged by the Android client.
+Returns due in-app reminders or scheduled webpage summaries that have not yet been acknowledged by the Android client. Webpage results include their source URL.
 
 ### `POST /api/reminders/:taskId/ack`
 
@@ -125,7 +125,7 @@ Screenshots are not included yet.
 
 ## Known limitations
 
-- Scheduled tasks support one-time and recurring reminders only. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. These schedules do not execute arbitrary actions.
+- Scheduled tasks support one-time and recurring reminders, plus read-only public-webpage summaries for an explicitly user-provided URL. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. Scheduled workflows do not check email or execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
 - Email drafts can be opened in an installed email app for review; the user must explicitly send there. There is no Gmail/OAuth integration, agent-side sending, or email search.
 - The in-app browser supports user-controlled navigation and text extraction, but the agent cannot click page controls, submit forms, authenticate, or automate websites.

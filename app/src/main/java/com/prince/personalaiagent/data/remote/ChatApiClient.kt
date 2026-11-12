@@ -30,7 +30,8 @@ data class AgentReminder(
     val taskId: String,
     val title: String,
     val message: String,
-    val executionDelayMs: Long? = null
+    val executionDelayMs: Long? = null,
+    val sourceUrl: String? = null
 )
 
 class AgentApiException(
@@ -78,7 +79,9 @@ class ChatApiClient {
                     executionDelayMs = reminder.optLong(
                         "executionDelayMs",
                         -1
-                    ).takeIf { it >= 0 }
+                    ).takeIf { it >= 0 },
+                    sourceUrl = reminder.optString("sourceUrl")
+                        .takeIf { it.isNotBlank() && it != "null" }
                 )
             }
         } finally {

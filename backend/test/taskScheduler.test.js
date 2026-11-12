@@ -265,3 +265,74 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
         assert.equal((await scheduler.cancelTask(task.id)).success, true);
     });
 });
+
+test("scheduled webpage workflows run, recur, and deliver summaries", async t => {
+    const { scheduler } = await loadIsolatedScheduler(t);
+    const workflow = {
+        url: "https://example.com/news",
+        searchTerm: "release"
+    };
+
+    await assert.rejects(
+        scheduler.createTask({
+            title: "Invalid workflow",
+            description: "Summarize a webpage.",
+            runAt: new Date(Date.now() + 60_000).toISOString(),
+            actionType: "webpage_summary",
+            workflow: { url: "javascript:alert(1)" }
+        }),
+        /valid HTTP\(S\) URL/
+    );
+
+    const oneTimeTask = await scheduler.createTask({
+        title: "One-time webpage summary",
+        description: "Summarize the public page.",
+        runAt: new Date(Date.now() + 60_000).toISOString(),
+        actionType: "webpage_summary",
+        workflow
+    });
+    const recurringTask = await scheduler.createRecurringTask({
+        title: "Recurring webpage summary",
+        description: "Summarize the public page.",
+        cronExpression: "*/5 * * * *",
+        timeZone: "UTC",
+        actionType: "webpage_summary",
+        workflow
+    });
+
+    const executedWorkflows = [];
+    scheduler.setWebpageSummaryExecutor(async scheduledWorkflow => {
+        executedWorkflows.push(scheduledWorkflow);
+        return "The page announces a new release.";
+    });
+    oneTimeTask.runAt = new Date(Date.now() - 1000).toISOString();
+    recurringTask.runAt = new Date(Date.now() - 1000).toISOString();
+
+    const executed = await scheduler.executeDueTasks();
+    const reminders = await scheduler.getPendingReminders();
+
+    assert.equal(executed.length, 2);
+    assert.equal(oneTimeTask.status, "completed");
+    assert.equal(oneTimeTask.result.type, "webpage_summary");
+    assert.equal(
+        oneTimeTask.result.message,
+        "The page announces a new release.\n\nSource: https://example.com/news"
+    );
+    assert.equal(oneTimeTask.result.sourceUrl, workflow.url);
+    assert.equal(recurringTask.status, "pending");
+    assert.equal(reminders.length, 2);
+    assert.ok(reminders.every(reminder =>
+        reminder.message ===
+            "The page announces a new release.\n\nSource: https://example.com/news" &&
+        reminder.sourceUrl === workflow.url
+    ));
+    assert.equal(executedWorkflows.length, 2);
+
+    for (const reminder of reminders) {
+        assert.equal(
+            (await scheduler.acknowledgeReminder(reminder.taskId)).success,
+            true
+        );
+    }
+    assert.equal((await scheduler.getPendingReminders()).length, 0);
+});

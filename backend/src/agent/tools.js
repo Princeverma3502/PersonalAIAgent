@@ -155,6 +155,109 @@ const TOOL_REGISTRY = Object.freeze({
         })
     },
 
+    create_scheduled_webpage_summary: {
+        name: "create_scheduled_webpage_summary",
+        description: "Schedules a one-time read-only retrieval and concise summary of a public webpage explicitly supplied by the user. It does not check email or perform other actions.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                title: { type: "string", description: "Short task title." },
+                url: { type: "string", description: "Exact public HTTP(S) URL supplied by the user." },
+                runAt: { type: "string", description: "Future ISO 8601 date-time with a timezone offset." },
+                searchTerm: { type: "string", description: "Optional phrase to search for on the page, up to 100 characters." }
+            },
+            required: ["title", "url", "runAt"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length >= 3 &&
+            Object.keys(args).length <= 4 &&
+            Object.keys(args).every(key =>
+                ["title", "url", "runAt", "searchTerm"].includes(key)
+            ) &&
+            typeof args.title === "string" &&
+            args.title.trim().length > 0 &&
+            args.title.length <= 120 &&
+            typeof args.runAt === "string" &&
+            isValidWebPageRequest({
+                url: args.url,
+                ...(args.searchTerm !== undefined
+                    ? { searchTerm: args.searchTerm }
+                    : {})
+            }),
+        handler: async args => ({
+            success: true,
+            task: await createTask({
+                title: args.title,
+                description: `Summarize public webpage: ${args.title}`,
+                runAt: args.runAt,
+                actionType: "webpage_summary",
+                workflow: {
+                    url: args.url,
+                    ...(args.searchTerm
+                        ? { searchTerm: args.searchTerm }
+                        : {})
+                }
+            })
+        })
+    },
+
+    create_recurring_webpage_summary: {
+        name: "create_recurring_webpage_summary",
+        description: "Schedules a recurring read-only retrieval and concise summary of a public webpage explicitly supplied by the user. It does not check email or perform other actions.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                title: { type: "string", description: "Short task title." },
+                url: { type: "string", description: "Exact public HTTP(S) URL supplied by the user." },
+                cronExpression: { type: "string", description: "Five-field cron schedule." },
+                timeZone: { type: "string", description: "IANA timezone for the schedule." },
+                searchTerm: { type: "string", description: "Optional phrase to search for on the page, up to 100 characters." }
+            },
+            required: ["title", "url", "cronExpression", "timeZone"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length >= 4 &&
+            Object.keys(args).length <= 5 &&
+            Object.keys(args).every(key =>
+                [
+                    "title",
+                    "url",
+                    "cronExpression",
+                    "timeZone",
+                    "searchTerm"
+                ].includes(key)
+            ) &&
+            typeof args.title === "string" &&
+            args.title.trim().length > 0 &&
+            args.title.length <= 120 &&
+            typeof args.cronExpression === "string" &&
+            typeof args.timeZone === "string" &&
+            isValidWebPageRequest({
+                url: args.url,
+                ...(args.searchTerm !== undefined
+                    ? { searchTerm: args.searchTerm }
+                    : {})
+            }),
+        handler: async args => ({
+            success: true,
+            task: await createRecurringTask({
+                title: args.title,
+                description: `Summarize public webpage: ${args.title}`,
+                cronExpression: args.cronExpression,
+                timeZone: args.timeZone,
+                actionType: "webpage_summary",
+                workflow: {
+                    url: args.url,
+                    ...(args.searchTerm
+                        ? { searchTerm: args.searchTerm }
+                        : {})
+                }
+            })
+        })
+    },
+
     list_scheduled_tasks: {
         name: "list_scheduled_tasks",
         description: "Lists all scheduled tasks and their statuses.",

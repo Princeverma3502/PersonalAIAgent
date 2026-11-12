@@ -380,6 +380,61 @@ test("agent tool and provider error handling", async t => {
         assert.doesNotMatch(result.reply, /The reminder is scheduled/);
     });
 
+    await t.test("requires a user-provided URL when scheduling webpage summaries", async () => {
+        const previousCreateTask = taskHandlers.createTask;
+        let createTaskCalls = 0;
+        taskHandlers.createTask = async args => {
+            createTaskCalls += 1;
+            return {
+                id: "scheduled-workflow",
+                ...args,
+                status: "pending"
+            };
+        };
+
+        try {
+            const call = {
+                name: "create_scheduled_webpage_summary",
+                args: {
+                    title: "Daily release summary",
+                    url: "https://example.com/news",
+                    runAt: "2099-01-01T09:00:00Z"
+                }
+            };
+            const rejected = await runAgentTurn({
+                ai: createMockAi([
+                    functionCallResponse([call]),
+                    { text: "Scheduled." }
+                ]),
+                message: "Schedule a daily summary of the news page.",
+                modelList: ["test-model"]
+            });
+
+            assert.equal(rejected.success, false);
+            assert.equal(rejected.toolCalls[0].status, "failed");
+            assert.equal(createTaskCalls, 0);
+
+            const accepted = await runAgentTurn({
+                ai: createMockAi([
+                    functionCallResponse([call]),
+                    { text: "Scheduled." }
+                ]),
+                message: "Schedule a daily summary of https://example.com/news",
+                modelList: ["test-model"]
+            });
+
+            assert.equal(accepted.success, true);
+            assert.equal(createTaskCalls, 1);
+            assert.equal(
+                accepted.toolCalls[0].result.task.workflow.url,
+                "https://example.com/news"
+            );
+            assert.match(accepted.reply, /read-only public webpage summary workflow/);
+        } finally {
+            taskHandlers.createTask = previousCreateTask;
+        }
+    });
+
     await t.test("falls through models in order and classifies quota errors", async () => {
         const attemptedModels = [];
         const quotaError = Object.assign(new Error(JSON.stringify({

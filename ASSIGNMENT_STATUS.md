@@ -13,6 +13,7 @@
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
 - Validated email draft preparation, with user-initiated handoff to a compatible email app; the agent never sends.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
+- One-time and recurring scheduled public-webpage summaries for exact URLs supplied by the user; page retrieval and Gemini summarization run at the scheduled time and deliver results through reminders.
 - Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - Per-request agent latency and process PSS diagnostics, plus persisted scheduler delay measurements.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
@@ -20,22 +21,21 @@
 
 ## Partially completed
 
-- **Scheduled reminders:** one-time and recurring reminder results are durable. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. The backend must be reachable and notification permission granted for background notifications.
+- **Scheduled tasks:** one-time and recurring reminders and read-only public-webpage summaries are supported. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. The backend must be reachable and notification permission granted for background notifications. Webpage workflows require the backend and Gemini to be available when due.
 - **Gemini integration:** fallback and tool recovery are covered with mocks; a successful live Gemini request was not verified.
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
 - **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
 - **Performance analysis:** Per-event latency, process PSS, and scheduler delay are surfaced. A representative live Gemini/device benchmark has not yet been collected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
-- **Recurring workflows:** cron reminders are supported, but recurring actions such as checking email and producing summaries are not implemented.
+- **Scheduled workflow scope:** webpage summaries are supported only for explicit public URLs; email checks and other arbitrary actions are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
 ## Not implemented
 
 - Gmail/OAuth integration, agent-side email sending, and email search. Users can review and send a draft themselves in a compatible email app.
 - Agent-driven browser automation, authentication, and page actions such as clicking or submitting forms.
-- Actual execution of arbitrary scheduled actions or recurring workflows.
-- Arbitrary scheduled workflows/actions beyond reminders.
+- Gmail/OAuth-backed scheduled email checks or other arbitrary scheduled actions.
 - Production authentication, HTTPS deployment, and configurable Android API environments.
 - Screenshots.
 
@@ -44,12 +44,13 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 29 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
+| `npm --prefix backend test` | Passed: 33 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
 | Public webpage retrieval | Tests pass for URL/IP restrictions, redirect validation, text extraction, search, and tool registration. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
 | Scheduler behavior | Isolated tests pass for validation, create/list/cancel, persistence across reload, durable reminder results, acknowledgement, retry limit, repeated execution check, and due-to-execution delay recording. |
 | Recurring scheduler behavior | Isolated tests pass for five-field cron validation, minimum interval, IANA timezone, persistence, next-run advancement, reminder acknowledgement, and cancellation. |
+| Scheduled webpage summaries | Mock tests pass for page retrieval followed by tool-free summarization, retrieval failure handling, explicit-URL enforcement, workflow validation, one-time and recurring execution, result/source delivery, and acknowledgement. |
 | Android background reminders | `.\gradlew.bat testDebugUnitTest assembleDebug` verifies WorkManager integration compiles and packages; no device notification or Doze-mode test has been completed. |
 | Memory retrieval | Unit tests verify relevance ranking, recent-memory fallback, and result limits. |
 | Browser URL policy | Unit tests verify HTTPS normalization and reject non-web schemes and embedded credentials. |
@@ -64,8 +65,8 @@
 
 ## Known limitations and risks
 
-- Scheduled task actions are limited to durable reminder records; Android notifications are best-effort and may be delayed by OS policy.
-- Recurrence is limited to reminders and at least five minutes apart. It does not run workflows, and the backend process must be alive at execution time.
+- Scheduled task actions are limited to durable reminders and read-only summaries of an explicitly provided public webpage; Android notifications are best-effort and may be delayed by OS policy.
+- Recurrence is limited to reminders and webpage summaries and at least five minutes apart. It does not run email checks or arbitrary actions, and the backend process must be alive at execution time.
 - Reminder delivery requires the backend to be running and reachable. Background delivery also requires notification permission and is subject to Android scheduling and battery policies.
 - Speech recognition depends on device service availability and has not been exercised on an emulator.
 - The backend has no authentication and the Android development client uses cleartext HTTP.

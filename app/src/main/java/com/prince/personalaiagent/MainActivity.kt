@@ -162,7 +162,8 @@ fun AgentScreen() {
                                 isUser = false,
                                 toolName = "scheduled_reminder",
                                 toolStatus = "success",
-                                schedulerDelayMs = reminder.executionDelayMs
+                                schedulerDelayMs = reminder.executionDelayMs,
+                                browserUrl = reminder.sourceUrl
                             )
                         )
                     }
