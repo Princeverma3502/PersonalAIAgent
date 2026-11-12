@@ -7,6 +7,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Jetpack Compose chat UI with loading feedback, scrolling responses, and backend error handling.
 - Runtime-permission-based speech recognition that puts recognized text in the editable chat field.
 - Local Room memory storage with save, list, search, delete, and relevance-ranked agent context.
+- Room-backed conversation history that restores after app restarts and can be cleared separately from saved memories.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation with an explicit handoff to an installed email app; the agent never sends email.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
@@ -134,6 +135,8 @@ npm --prefix backend run benchmark
 The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover memory ranking, browser URL validation, and speech-error mapping; WebView interaction, microphone recognition, emulator behavior, and live Gemini calls need device or service validation.
 
 The benchmark runs 20 mock agent requests and scheduled webpage workflows by default. It reports mean, p50, and p95 latency plus backend RSS and heap deltas. It makes no network requests and does not measure live Gemini or Android performance; these figures are a reproducible local baseline, not production latency.
+
+Conversation messages are stored locally in Room. Use **Clear** in the chat toolbar to remove the transcript from this device; saved memories are unaffected. Chat history is not synchronized to the backend.
 
 ## Screenshots
 

@@ -31,6 +31,8 @@ import androidx.core.content.ContextCompat
 import com.prince.personalaiagent.data.local.MemoryDatabase
 import com.prince.personalaiagent.data.local.MemoryRelevanceRanker
 import com.prince.personalaiagent.data.local.MemoryRepository
+import com.prince.personalaiagent.data.local.ConversationMessageEntity
+import com.prince.personalaiagent.data.local.ConversationRepository
 import com.prince.personalaiagent.data.remote.AgentApiException
 import com.prince.personalaiagent.data.remote.AgentResponse
 import com.prince.personalaiagent.data.remote.ChatApiClient
@@ -55,6 +57,22 @@ data class ChatMessage(
     val schedulerDelayMs: Long? = null,
     val requestDurationMs: Long? = null,
     val processPssKb: Int? = null
+)
+
+private fun createGreetingMessage() = ChatMessage(
+    id = 0,
+    text = "Hello! I'm your Personal AI Agent. How can I help you today?",
+    isUser = false
+)
+
+private fun nextChatMessageId(messages: List<ChatMessage>): Int {
+    return (messages.maxOfOrNull { it.id } ?: -1) + 1
+}
+
+private fun ConversationMessageEntity.toChatMessage() = ChatMessage(
+    id = id,
+    text = text,
+    isUser = isUser
 )
 
 class MainActivity : ComponentActivity() {
@@ -82,6 +100,11 @@ fun AgentScreen() {
     val memoryRepository = remember {
         MemoryRepository(
             MemoryDatabase.getDatabase(context).memoryDao()
+        )
+    }
+    val conversationRepository = remember {
+        ConversationRepository(
+            MemoryDatabase.getDatabase(context).conversationMessageDao()
         )
     }
 
@@ -112,15 +135,21 @@ fun AgentScreen() {
     var pendingDeleteAll by remember {
         mutableStateOf(false)
     }
+    var isConversationLoaded by remember {
+        mutableStateOf(false)
+    }
+    var isClearingConversation by remember {
+        mutableStateOf(false)
+    }
+    var showClearConversationConfirmation by remember {
+        mutableStateOf(false)
+    }
+    var conversationHistoryError by remember {
+        mutableStateOf<String?>(null)
+    }
 
     val messages = remember {
-        mutableStateListOf(
-            ChatMessage(
-                id = 0,
-                text = "Hello! I'm your Personal AI Agent. How can I help you today?",
-                isUser = false
-            )
-        )
+        mutableStateListOf<ChatMessage>()
     }
 
     val listState = rememberLazyListState()
@@ -128,6 +157,35 @@ fun AgentScreen() {
     val displayedReminderIds = remember { mutableSetOf<String>() }
     var reminderServiceUnavailable by remember {
         mutableStateOf(false)
+    }
+
+    LaunchedEffect(conversationRepository) {
+        try {
+            val savedMessages = withContext(Dispatchers.IO) {
+                conversationRepository.getAllMessages()
+            }
+            if (savedMessages.isEmpty()) {
+                val greeting = createGreetingMessage()
+                messages.add(greeting)
+                withContext(Dispatchers.IO) {
+                    conversationRepository.saveMessage(
+                        greeting.id,
+                        greeting.text,
+                        greeting.isUser
+                    )
+                }
+            } else {
+                messages.addAll(savedMessages.map { it.toChatMessage() })
+            }
+        } catch (error: Exception) {
+            if (messages.isEmpty()) {
+                messages.add(createGreetingMessage())
+            }
+            conversationHistoryError =
+                "Could not load saved chat history: ${error.message ?: "storage error"}"
+        } finally {
+            isConversationLoaded = true
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -144,7 +202,9 @@ fun AgentScreen() {
         }
     }
 
-    LaunchedEffect(apiClient) {
+    LaunchedEffect(apiClient, isConversationLoaded) {
+        if (!isConversationLoaded) return@LaunchedEffect
+
         while (isActive) {
             try {
                 val reminders = withContext(Dispatchers.IO) {
@@ -152,20 +212,38 @@ fun AgentScreen() {
                 }
                 reminderServiceUnavailable = false
 
+                if (isClearingConversation) {
+                    delay(30_000)
+                    continue
+                }
+
                 reminders.forEach { reminder ->
-                    if (displayedReminderIds.add(reminder.taskId)) {
-                        val nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
-                        messages.add(
-                            ChatMessage(
-                                id = nextId,
-                                text = "**Reminder: ${reminder.title}**\n\n${reminder.message}",
-                                isUser = false,
-                                toolName = "scheduled_reminder",
-                                toolStatus = "success",
-                                schedulerDelayMs = reminder.executionDelayMs,
-                                browserUrl = reminder.sourceUrl
-                            )
+                    if (reminder.taskId !in displayedReminderIds) {
+                        val reminderMessage = ChatMessage(
+                            id = nextChatMessageId(messages),
+                            text = "**Reminder: ${reminder.title}**\n\n${reminder.message}",
+                            isUser = false,
+                            toolName = "scheduled_reminder",
+                            toolStatus = "success",
+                            schedulerDelayMs = reminder.executionDelayMs,
+                            browserUrl = reminder.sourceUrl
                         )
+                        messages.add(reminderMessage)
+                        try {
+                            withContext(Dispatchers.IO) {
+                                conversationRepository.saveMessage(
+                                    reminderMessage.id,
+                                    reminderMessage.text,
+                                    reminderMessage.isUser
+                                )
+                            }
+                            displayedReminderIds.add(reminder.taskId)
+                        } catch (error: Exception) {
+                            messages.remove(reminderMessage)
+                            conversationHistoryError =
+                                "Could not save reminder to chat history: ${error.message ?: "storage error"}"
+                            throw error
+                        }
                     }
 
                     withContext(Dispatchers.IO) {
@@ -180,31 +258,79 @@ fun AgentScreen() {
         }
     }
 
+    fun clearConversationHistory() {
+        if (!isConversationLoaded || isLoading || isClearingConversation) return
+
+        isClearingConversation = true
+        coroutineScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    conversationRepository.clearHistory()
+                }
+                messages.clear()
+                displayedReminderIds.clear()
+                pendingDeletionKeyword = null
+                pendingDeleteAll = false
+                input = ""
+
+                val greeting = createGreetingMessage()
+                messages.add(greeting)
+                withContext(Dispatchers.IO) {
+                    conversationRepository.saveMessage(
+                        greeting.id,
+                        greeting.text,
+                        greeting.isUser
+                    )
+                }
+                conversationHistoryError = null
+            } catch (error: Exception) {
+                conversationHistoryError =
+                    "Could not clear chat history: ${error.message ?: "storage error"}"
+            } finally {
+                isClearingConversation = false
+                showClearConversationConfirmation = false
+            }
+        }
+    }
+
     fun sendMessage() {
 
         val userMessage = input.trim()
 
-        if (userMessage.isBlank() || isLoading) return
+        if (
+            userMessage.isBlank() ||
+            isLoading ||
+            !isConversationLoaded ||
+            isClearingConversation
+        ) return
 
         val keywordToConfirm = pendingDeletionKeyword
         val deleteAllToConfirm = pendingDeleteAll
 
-        val userId = (messages.maxOfOrNull { it.id } ?: 0) + 1
-
-        messages.add(
-            ChatMessage(
-                id = userId,
-                text = userMessage,
-                isUser = true
-            )
+        val userChatMessage = ChatMessage(
+            id = nextChatMessageId(messages),
+            text = userMessage,
+            isUser = true
         )
+        messages.add(userChatMessage)
 
         input = ""
         isLoading = true
 
         coroutineScope.launch {
+            var historyWarning: String? = null
 
             val result = withContext(Dispatchers.IO) {
+                try {
+                    conversationRepository.saveMessage(
+                        userChatMessage.id,
+                        userChatMessage.text,
+                        userChatMessage.isUser
+                    )
+                } catch (error: Exception) {
+                    historyWarning =
+                        "Could not save your message to chat history: ${error.message ?: "storage error"}"
+                }
 
                 try {
 
@@ -520,24 +646,79 @@ fun AgentScreen() {
                 }
             }
 
-            messages.add(
-                ChatMessage(
-                    id = userId + 1,
-                    text = result.reply,
-                    isUser = false,
-                    toolName = result.toolName,
-                    toolStatus = result.status,
-                    emailDrafts = result.emailDrafts,
-                    browserUrl = result.browserUrl,
-                    requestDurationMs = result.requestDurationMs,
-                    processPssKb = result.requestDurationMs?.let {
-                        currentProcessPssKb()
-                    }
-                )
+            val assistantMessage = ChatMessage(
+                id = nextChatMessageId(messages),
+                text = result.reply,
+                isUser = false,
+                toolName = result.toolName,
+                toolStatus = result.status,
+                emailDrafts = result.emailDrafts,
+                browserUrl = result.browserUrl,
+                requestDurationMs = result.requestDurationMs,
+                processPssKb = result.requestDurationMs?.let {
+                    currentProcessPssKb()
+                }
             )
+            messages.add(assistantMessage)
+            val assistantMessageIndex = messages.indexOfFirst {
+                it.id == assistantMessage.id
+            }
+
+            try {
+                withContext(Dispatchers.IO) {
+                    conversationRepository.saveMessage(
+                        assistantMessage.id,
+                        assistantMessage.text,
+                        assistantMessage.isUser
+                    )
+                }
+            } catch (error: Exception) {
+                historyWarning =
+                    "Could not save the reply to chat history: ${error.message ?: "storage error"}"
+            }
+            if (historyWarning != null) {
+                conversationHistoryError = historyWarning
+                if (assistantMessageIndex >= 0) {
+                    messages[assistantMessageIndex] = assistantMessage.copy(
+                        text = "${assistantMessage.text}\n\n$historyWarning"
+                    )
+                }
+            } else {
+                conversationHistoryError = null
+            }
 
             isLoading = false
         }
+    }
+
+    if (showClearConversationConfirmation) {
+        AlertDialog(
+            onDismissRequest = {
+                showClearConversationConfirmation = false
+            },
+            title = { Text("Clear chat history?") },
+            text = {
+                Text(
+                    "This removes saved conversation messages from this device. " +
+                        "Your saved memories will not be deleted."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { clearConversationHistory() },
+                    enabled = !isLoading && !isClearingConversation
+                ) {
+                    Text("Clear chat")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearConversationConfirmation = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showMemoryScreen) {
@@ -581,6 +762,16 @@ fun AgentScreen() {
                         ) {
                             Text("Browse")
                         }
+                        TextButton(
+                            onClick = {
+                                showClearConversationConfirmation = true
+                            },
+                            enabled = isConversationLoaded &&
+                                !isLoading &&
+                                !isClearingConversation
+                        ) {
+                            Text("Clear")
+                        }
                     }
                 )
             }
@@ -595,7 +786,9 @@ fun AgentScreen() {
 
                 ChatMessageList(
                     messages = messages,
-                    isLoading = isLoading,
+                    isLoading = isLoading ||
+                        !isConversationLoaded ||
+                        isClearingConversation,
                     listState = listState,
                     onOpenBrowser = { url ->
                         browserStartUrl = url
@@ -611,6 +804,13 @@ fun AgentScreen() {
                 if (reminderServiceUnavailable) {
                     Text(
                         text = "Could not check scheduled reminders. Will retry while chat is open.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                conversationHistoryError?.let { error ->
+                    Text(
+                        text = error,
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -633,7 +833,10 @@ fun AgentScreen() {
 
                     IconButton(
                         onClick = { sendMessage() },
-                        enabled = input.isNotBlank() && !isLoading
+                        enabled = input.isNotBlank() &&
+                            !isLoading &&
+                            isConversationLoaded &&
+                            !isClearingConversation
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,

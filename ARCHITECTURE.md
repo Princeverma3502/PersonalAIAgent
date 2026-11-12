@@ -19,7 +19,7 @@ Compose UI
 
 - `MainActivity.kt` hosts the Compose screen and chat state. It handles memory-specific command phrases locally and sends other messages to the backend.
 - `MemoryScreen.kt` displays the saved memories and confirms deletion.
-- `MemoryEntity`, `MemoryDao`, `MemoryDatabase`, and `MemoryRepository` define the Room persistence layer. The database is named `personal_agent_memory`.
+- `MemoryEntity`, `MemoryDao`, `ConversationMessageEntity`, `ConversationMessageDao`, `MemoryDatabase`, and their repositories define the Room persistence layer. The `personal_agent_memory` database stores memories and the chat transcript; schema migration 1→2 adds the transcript table without replacing existing memories.
 - `ChatApiClient.kt` sends JSON to the build-configured backend origin, includes at most ten short memories, reads all `toolCalls`, and raises a response exception for non-2xx HTTP codes. Debug builds default to the emulator host; release builds require an HTTPS origin.
 - The network call runs on `Dispatchers.IO`; loading and error messages are shown in the Compose UI.
 - `VoiceInput.kt` requests `RECORD_AUDIO` at runtime, starts a one-shot `SpeechRecognizer` session on user action, places recognized text into the editable field, and cancels/destroys the recognizer when the control leaves composition. It does not store audio or listen in the background.
@@ -85,6 +85,8 @@ Scheduled webpage summary tools require the exact public URL in the user's reque
 ## Memory persistence
 
 Memories are kept only in the Android Room database. Local command phrases invoke repository operations for save, view, search, and delete. For normal agent requests, the client ranks memories by meaningful lexical overlap with the current request and sends up to ten matches, truncated to 500 characters each. If no terms match, it falls back to the newest memories. The backend does not persist the memory list; retrieval is lexical rather than semantic.
+
+Chat messages are stored separately from personal memories in Room and restored in message order at startup. The chat toolbar offers a confirmation-gated clear action that removes the transcript but preserves saved memories. Conversation history stays on-device and is not included in agent memory context automatically.
 
 ## Scheduled-task flow and limitations
 

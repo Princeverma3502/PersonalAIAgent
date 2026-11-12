@@ -7,6 +7,7 @@
 - Parsing of all agent tool calls and their statuses.
 - Foreground, one-shot Android speech recognition with runtime microphone permission and recognized-text editing.
 - Room-backed local memories with save, list, search, single-delete, and confirmed delete-all flows.
+- Room-backed conversation history restored across app restarts, with a confirmed clear action separate from memory deletion.
 - Lexically relevance-ranked memory retrieval for agent context, with recent-memory fallback.
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
@@ -25,7 +26,7 @@
 - **Scheduled tasks:** one-time and recurring reminders and read-only public-webpage summaries are supported. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. The backend must be reachable and notification permission granted for background notifications. Webpage workflows require the backend and Gemini to be available when due.
 - **Gemini integration:** fallback and tool recovery are covered with mocks; a successful live Gemini request was not verified.
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
-- **Android runtime:** Kotlin compilation, unit tests, debug APK packaging, and release APK packaging passed. No interactive emulator or physical-device pass was completed.
+- **Android runtime:** Kotlin compilation, unit tests, debug and release APK packaging, and five emulator instrumentation tests passed. Speech-recognition and full interactive feature testing remain incomplete.
 - **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
@@ -54,15 +55,16 @@
 | Scheduled webpage summaries | Mock tests pass for page retrieval followed by tool-free summarization, retrieval failure handling, explicit-URL enforcement, workflow validation, one-time and recurring execution, result/source delivery, and acknowledgement. |
 | Android background reminders | `.\gradlew.bat testDebugUnitTest assembleDebug` verifies WorkManager integration compiles and packages; no device notification or Doze-mode test has been completed. |
 | Memory retrieval | Unit tests verify relevance ranking, recent-memory fallback, and result limits. |
+| Conversation history | Two emulator instrumentation tests pass for Room reopen/clear behavior and v1→v2 migration preserving existing memories; all five connected instrumentation tests passed. |
 | Browser URL policy | Unit tests verify HTTPS normalization and reject non-web schemes and embedded credentials. |
 | Android browser | `compileDebugAndroidTestKotlin` and APK build pass; interactive WebView behavior was not tested on a device. |
 | Performance diagnostics and benchmark | `npm --prefix backend run benchmark` passed (20 mock iterations): agent response p50/p95 0.40/4.74 ms; scheduled workflow p50/p95 11.44/21.03 ms; RSS/heap delta +2.46/+1.28 MiB on Windows x64 / Node 22.17.1. Mock values exclude live Gemini/network and Android device memory. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |
-| `.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` | Passed: 7 Android unit tests, 0 failures; instrumentation tests compiled but were not run on a device. |
+| `.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` | Passed: 7 Android unit tests, 0 failures; Android instrumentation sources compiled. The separate `connectedDebugAndroidTest` run passed all 5 tests on the emulator. |
 | Android API environment configuration | Debug custom HTTP URL generated successfully; release APK built with HTTPS configuration; release cleartext traffic disabled and HTTP release URL rejected. |
-| Emulator/device tests | Emulator is present, but no interactive app test or speech-recognition test was completed. |
+| Emulator/device tests | Conversation database instrumentation tests ran on the emulator; no full interactive app or speech-recognition pass was completed. |
 | Debug APK | Rebuilt at `app/build/outputs/apk/debug/app-debug.apk`; 12,334,276 bytes. |
 
 ## Known limitations and risks
@@ -72,7 +74,7 @@
 - Reminder delivery requires the backend to be running and reachable. Background delivery also requires notification permission and is subject to Android scheduling and battery policies.
 - Speech recognition depends on device service availability and has not been exercised on an emulator.
 - The backend has no authentication. Debug permits cleartext HTTP for development; release builds enforce HTTPS but still require a deployed, authenticated backend.
-- Room migration behavior has not been exercised.
+- Chat history is stored locally with the existing Room database and can be cleared separately from saved memories; it is not synchronized to the backend.
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
 - Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
