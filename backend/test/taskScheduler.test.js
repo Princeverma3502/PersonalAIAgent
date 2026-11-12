@@ -113,6 +113,18 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
         const dueTasks = await scheduler.executeDueTasks();
 
         assert.deepEqual(dueTasks.map(dueTask => dueTask.id), [task.id]);
+        assert.deepEqual(dueTasks[0].result, {
+            type: "reminder",
+            taskId: task.id,
+            title: "Due test",
+            message: "This test runs only in its temporary storage."
+        });
+        assert.equal((await scheduler.getPendingReminders()).length, 1);
+        assert.equal(
+            (await scheduler.acknowledgeReminder(task.id)).success,
+            true
+        );
+        assert.equal((await scheduler.getPendingReminders()).length, 0);
         assert.equal((await scheduler.executeDueTasks()).length, 0);
         assert.equal((await scheduler.getTasks())[0].status, "completed");
 
@@ -121,5 +133,32 @@ test("scheduler persists, cancels, and completes tasks once", async t => {
             "utf8"
         ));
         assert.equal(persisted[0].status, "completed");
+        assert.equal(persisted[0].reminderAcknowledgedAt !== null, true);
+    });
+
+    await t.test("retries unsupported actions and stops after the limit", async t => {
+        const { scheduler } = await loadIsolatedScheduler(t);
+        const task = await scheduler.createTask({
+            title: "Unsupported action test",
+            description: "This action must not run.",
+            runAt: new Date(Date.now() + 60_000).toISOString()
+        });
+        const storedTask = (await scheduler.getTasks())[0];
+        storedTask.actionType = "shell";
+        storedTask.runAt = new Date(Date.now() - 1000).toISOString();
+
+        await scheduler.executeDueTasks();
+        assert.equal(storedTask.status, "pending");
+        assert.equal(storedTask.executionAttempts, 1);
+        assert.match(storedTask.lastError, /failed/);
+
+        storedTask.nextAttemptAt = null;
+        await scheduler.executeDueTasks();
+        storedTask.nextAttemptAt = null;
+        await scheduler.executeDueTasks();
+
+        assert.equal(storedTask.status, "failed");
+        assert.equal(storedTask.executionAttempts, 3);
+        assert.equal(storedTask.result, null);
     });
 });

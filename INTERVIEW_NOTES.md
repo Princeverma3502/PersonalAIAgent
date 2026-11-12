@@ -20,9 +20,13 @@ The backend sends tool declarations and a conversation to Gemini. Gemini may ret
 
 Room maps a Kotlin memory entity to a local SQLite table. A DAO defines insert, list, search, and delete queries; a repository provides the suspend/Flow operations used by Compose. The database is device-local. The app selectively includes up to ten short saved memories in agent requests when relevant to normal chat.
 
+## How does voice input work?
+
+The app requests `RECORD_AUDIO` only after a microphone-button tap. `SpeechRecognizer` runs a single foreground recognition session and returns text to the editable chat input. The recognizer is cancelled and destroyed when the composable is disposed. Audio is not stored, and the feature depends on a recognition service available on the device.
+
 ## How are scheduled tasks persisted?
 
-The scheduler serializes task records into `backend/data/scheduled-tasks.json`, writing a temporary file and renaming it into place. It validates title, description, timezone-explicit timestamp, and that execution time is in the future. A five-second timer marks due pending tasks completed. It does **not** perform arbitrary work, notify users, or schedule Android work.
+The scheduler serializes task records into `backend/data/scheduled-tasks.json`, writing a temporary file and renaming it into place. It validates title, description, timezone-explicit timestamp, and that execution time is in the future. A five-second timer executes the single supported `reminder` action by writing a durable result, with bounded retries for execution failures. The Android app polls and acknowledges reminders while the chat screen is open. It does **not** run arbitrary work or create Android system notifications.
 
 ## Security considerations
 
@@ -36,6 +40,6 @@ The scheduler serializes task records into `backend/data/scheduled-tasks.json`, 
 
 - The model list falls through in a fixed preferred order; quota exhaustion can still prevent a live response.
 - Retrying a failed tool call is inferred from tool name, arguments, and model round because there is no stable provider retry ID. Ambiguous multi-failure cases remain failed rather than being silently counted as success.
-- Scheduled-task storage is a simple JSON file suitable for a single local process, not concurrent distributed workers.
-- Memory and agent UI behavior has been compiled but not demonstrated on an emulator in the current validation pass.
-- Voice input, scheduled action execution, notifications, authentication, and production HTTPS setup are not implemented.
+- Scheduled-task storage is a simple JSON file suitable for a single local process, not concurrent distributed workers. Reminder delivery requires the Android app to be open.
+- Memory and agent UI behavior has been compiled but not interactively demonstrated on an emulator in the current validation pass.
+- Email/Gmail integration, browser retrieval, Android system notifications, authentication, and production HTTPS setup are not implemented.

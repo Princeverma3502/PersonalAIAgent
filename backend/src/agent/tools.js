@@ -25,7 +25,7 @@ const TOOL_REGISTRY = Object.freeze({
 
     create_scheduled_task: {
         name: "create_scheduled_task",
-        description: "Schedules a one-time task for a specified future date and time. The runAt value must be an ISO 8601 timestamp with a timezone offset.",
+        description: "Schedules a one-time in-app reminder for a specified future date and time. The runAt value must be an ISO 8601 timestamp with a timezone offset.",
         parametersJsonSchema: {
             type: "object",
             properties: {
@@ -35,7 +35,7 @@ const TOOL_REGISTRY = Object.freeze({
                 },
                 description: {
                     type: "string",
-                    description: "What should happen when the task becomes due."
+                    description: "Reminder message to display in the Android app when due."
                 },
                 runAt: {
                     type: "string",

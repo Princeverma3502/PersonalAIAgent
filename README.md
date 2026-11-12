@@ -5,9 +5,10 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 ## Features
 
 - Jetpack Compose chat UI with loading feedback, scrolling responses, and backend error handling.
+- Runtime-permission-based speech recognition that puts recognized text in the editable chat field.
 - Local Room memory storage with save, list, search, and delete flows.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
-- JSON-backed one-time scheduled-task records with create, list, cancel, and due-status updates.
+- JSON-backed one-time reminders with create, list, cancel, execution results, and in-app delivery while the chat screen is open.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
 ## Architecture
@@ -88,6 +89,14 @@ Agent endpoint used by Android. `memories` is optional and contains short string
 
 Responses include `success`, `reply`, and `status`. Agent responses also include `toolCall` for compatibility and `toolCalls` for the execution history.
 
+### `GET /api/reminders`
+
+Returns due in-app reminders that have not yet been acknowledged by the Android client.
+
+### `POST /api/reminders/:taskId/ack`
+
+Acknowledges a reminder after the Android app displays it. The app polls while its chat screen is open and uses the task ID to avoid duplicate display in the same process.
+
 ## Tests
 
 From the repository root in PowerShell:
@@ -97,7 +106,7 @@ npm --prefix backend test
 .\gradlew.bat testDebugUnitTest
 ```
 
-The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. The Android unit-test suite currently contains a basic example test; emulator and live Gemini checks must be run separately.
+The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover the example and speech-error mapping; microphone recognition, emulator interactions, and live Gemini calls must be verified separately.
 
 ## Screenshots
 
@@ -108,9 +117,10 @@ Screenshots are not included yet.
 
 ## Known limitations
 
-- A scheduled task becoming due only changes its status to `completed` and logs a count. It does not execute arbitrary actions, notify the user, or run on Android.
-- Voice input is not implemented; the chat screen labels it accordingly.
-- The Android application has not been verified in an emulator or on a physical device in the current validation pass.
+- Scheduled tasks support only an in-app reminder result. The app displays due reminders while open; it does not create Android system notifications, run a background worker, or execute arbitrary actions.
+- Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
+- Gmail/email provider access and browser retrieval are not configured or implemented. The agent must not claim to send emails or inspect webpages.
+- The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
 - Local memories are included in agent requests (up to 10 entries, 500 characters each); backend logs do not include their contents.
 - Gemini model availability and quota are controlled by the configured API account.

@@ -11,7 +11,11 @@ const {
     getUserFriendlyGeminiError,
     safeProviderError
 } = require("./agent/geminiError");
-const { initializeScheduler } = require("./scheduler/taskScheduler");
+const {
+    initializeScheduler,
+    getPendingReminders,
+    acknowledgeReminder
+} = require("./scheduler/taskScheduler");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -200,6 +204,26 @@ app.post("/api/agent", async (req, res) => {
             toolCall: null,
             toolCalls: []
         });
+    }
+});
+
+app.get("/api/reminders", async (req, res, next) => {
+    try {
+        return res.json({
+            success: true,
+            reminders: await getPendingReminders()
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post("/api/reminders/:taskId/ack", async (req, res, next) => {
+    try {
+        const result = await acknowledgeReminder(req.params.taskId);
+        return res.status(result.success ? 200 : 404).json(result);
+    } catch (error) {
+        return next(error);
     }
 });
 

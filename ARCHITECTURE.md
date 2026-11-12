@@ -19,7 +19,7 @@ Compose UI
 - `MemoryEntity`, `MemoryDao`, `MemoryDatabase`, and `MemoryRepository` define the Room persistence layer. The database is named `personal_agent_memory`.
 - `ChatApiClient.kt` sends JSON to the emulator address `http://10.0.2.2:3000/api/agent`, includes at most ten short memories, reads all `toolCalls`, and raises a response exception for non-2xx HTTP codes.
 - The network call runs on `Dispatchers.IO`; loading and error messages are shown in the Compose UI.
-- The voice control is not implemented. The UI states that voice input is unavailable.
+- `VoiceInput.kt` requests `RECORD_AUDIO` at runtime, starts a one-shot `SpeechRecognizer` session on user action, places recognized text into the editable field, and cancels/destroys the recognizer when the control leaves composition. It does not store audio or listen in the background.
 
 The current UI and data access are directly hosted by Compose state and repository calls; this project does not use a separate ViewModel layer.
 
@@ -75,10 +75,15 @@ Memories are kept only in the Android Room database. Local command phrases invok
 1. Gemini obtains current time and requests a task with title, description, and an ISO 8601 `runAt` value containing `Z` or an explicit offset.
 2. The scheduler checks non-empty bounded title/description, valid timestamp, and future execution time.
 3. The task record is written to JSON using a temporary file followed by rename.
-4. The scheduler checks for due pending tasks every five seconds, persists their `completed` status, then logs a count.
-5. Cancellation only changes a pending task to `cancelled`; unknown, completed, or cancelled IDs return failure.
+4. The scheduler checks for due pending reminders every five seconds. It persists an `executing` state, creates a durable reminder result keyed by task ID, and persists completion. Interrupted `executing` tasks are re-queued at startup; action failures retry with bounded backoff and eventually become `failed`.
+5. `GET /api/reminders` exposes unacknowledged results. While the chat screen is open, Android polls every 30 seconds, displays each task ID once per app process, and acknowledges it with `POST /api/reminders/:taskId/ack`.
+6. Cancellation only changes a pending task to `cancelled`; unknown, completed, or cancelled IDs return failure.
 
-**Important:** A due task is not executed. The scheduler does not run arbitrary actions, deliver notifications, or launch work on Android. It is a persisted task-record/status demonstration only.
+**Important:** The only supported action is creating an in-app reminder result. There are no Android system notifications or background app polling; reminders are displayed when the app is open. The scheduler does not run arbitrary actions or execute generated code.
+
+## Voice input
+
+The Compose control requests microphone permission only after a user tap. Speech recognition is a one-shot foreground interaction; the recognized text remains editable before submission. Permission denial, unavailable recognition, cancellation, silence, and recognition service errors are surfaced in the UI. No recording is saved. Actual speech availability depends on the emulator/device recognition service and was not verified in the current test pass.
 
 ## Security and deployment notes
 
@@ -86,3 +91,4 @@ Memories are kept only in the Android Room database. Local command phrases invok
 - CORS allows the configured `ALLOWED_ORIGIN`, defaulting to `http://localhost:3000`.
 - `.env` files and backend scheduler data are ignored by Git; `.env.example` contains placeholders.
 - The current emulator setup uses cleartext HTTP and has no user authentication. Use HTTPS, authentication, deployment-specific origins, and secret management before exposing the service publicly.
+- No email provider/OAuth integration or browser retrieval tool is configured in this project.

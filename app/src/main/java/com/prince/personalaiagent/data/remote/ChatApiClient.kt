@@ -2,15 +2,23 @@
 package com.prince.personalaiagent.data.remote
 
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 data class AgentResponse(
     val reply: String,
     val status: String,
     val toolName: String?
+)
+
+data class AgentReminder(
+    val taskId: String,
+    val title: String,
+    val message: String
 )
 
 class AgentApiException(
@@ -21,8 +29,92 @@ class ChatApiClient {
 
     companion object {
         private const val BASE_URL = "http://10.0.2.2:3000/api/agent"
+        private const val REMINDERS_URL = "http://10.0.2.2:3000/api/reminders"
         private const val CONNECT_TIMEOUT = 15000
         private const val READ_TIMEOUT = 60000
+    }
+
+    fun getPendingReminders(): List<AgentReminder> {
+        val connection = URL(REMINDERS_URL)
+            .openConnection() as HttpURLConnection
+
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = CONNECT_TIMEOUT
+            connection.readTimeout = READ_TIMEOUT
+
+            val responseCode = connection.responseCode
+            val responseText = readResponse(connection, responseCode)
+            val json = JSONObject(responseText)
+
+            if (responseCode !in 200..299) {
+                throw IOException(json.optString("message", "Could not load reminders."))
+            }
+
+            val reminders = json.optJSONArray("reminders") ?: return emptyList()
+            return (0 until reminders.length()).mapNotNull { index ->
+                val reminder = reminders.optJSONObject(index) ?: return@mapNotNull null
+                val taskId = reminder.optString("taskId")
+                if (taskId.isBlank() || taskId == "null") {
+                    return@mapNotNull null
+                }
+
+                AgentReminder(
+                    taskId = taskId,
+                    title = reminder.optString("title", "Reminder"),
+                    message = reminder.optString("message", "")
+                )
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun acknowledgeReminder(taskId: String) {
+        val encodedTaskId = URLEncoder.encode(taskId, Charsets.UTF_8.name())
+        val connection = URL("$REMINDERS_URL/$encodedTaskId/ack")
+            .openConnection() as HttpURLConnection
+
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = CONNECT_TIMEOUT
+            connection.readTimeout = READ_TIMEOUT
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                val responseText = readResponse(connection, responseCode)
+                val message = try {
+                    JSONObject(responseText).optString(
+                        "message",
+                        "Could not acknowledge reminder."
+                    )
+                } catch (error: JSONException) {
+                    throw IOException("Could not parse reminder acknowledgement.", error)
+                }
+                throw IOException(message)
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun readResponse(
+        connection: HttpURLConnection,
+        responseCode: Int
+    ): String {
+        val stream = if (responseCode in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream
+        }
+
+        return stream
+            ?.bufferedReader()
+            ?.use { it.readText() }
+            ?: ""
     }
 
     fun sendMessage(
@@ -63,17 +155,7 @@ class ChatApiClient {
 
             val responseCode = connection.responseCode
 
-            val responseStream = if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            }
-
-            val responseText = responseStream
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                ?: ""
-
+            val responseText = readResponse(connection, responseCode)
             val json = JSONObject(responseText)
 
             // Read all tool executions from the backend.

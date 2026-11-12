@@ -26,7 +26,9 @@ import com.prince.personalaiagent.data.remote.ChatApiClient
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
 import dev.jeziellago.compose.markdowntext.MarkdownText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -95,6 +97,45 @@ fun AgentScreen() {
     }
 
     val listState = rememberLazyListState()
+    val apiClient = remember { ChatApiClient() }
+    val displayedReminderIds = remember { mutableSetOf<String>() }
+    var reminderServiceUnavailable by remember {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(apiClient) {
+        while (isActive) {
+            try {
+                val reminders = withContext(Dispatchers.IO) {
+                    apiClient.getPendingReminders()
+                }
+                reminderServiceUnavailable = false
+
+                reminders.forEach { reminder ->
+                    if (displayedReminderIds.add(reminder.taskId)) {
+                        val nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
+                        messages.add(
+                            ChatMessage(
+                                id = nextId,
+                                text = "**Reminder: ${reminder.title}**\n\n${reminder.message}",
+                                isUser = false,
+                                toolName = "scheduled_reminder",
+                                toolStatus = "success"
+                            )
+                        )
+                    }
+
+                    withContext(Dispatchers.IO) {
+                        apiClient.acknowledgeReminder(reminder.taskId)
+                    }
+                }
+            } catch (_: Exception) {
+                reminderServiceUnavailable = true
+            }
+
+            delay(30_000)
+        }
+    }
 
     fun sendMessage() {
 
@@ -367,7 +408,7 @@ fun AgentScreen() {
                                 .take(10)
                                 .map { memory -> memory.content }
 
-                            ChatApiClient().sendMessage(
+                            apiClient.sendMessage(
                                 message = userMessage,
                                 memories = savedMemories
                             )
@@ -492,6 +533,14 @@ fun AgentScreen() {
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
+
+                if (reminderServiceUnavailable) {
+                    Text(
+                        text = "Could not check scheduled reminders. Will retry while chat is open.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

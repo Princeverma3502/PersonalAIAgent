@@ -43,6 +43,19 @@ async function initializeScheduler() {
         await saveTasks();
     }
 
+    let recoveredTasks = false;
+    for (const task of tasks) {
+        if (task.status === "executing") {
+            task.status = "pending";
+            task.nextAttemptAt = null;
+            recoveredTasks = true;
+        }
+    }
+
+    if (recoveredTasks) {
+        await saveTasks();
+    }
+
     initialized = true;
     startScheduler();
 }
@@ -101,10 +114,16 @@ async function createTask({ title, description, runAt }) {
         id: crypto.randomUUID(),
         title: title.trim(),
         description: description.trim(),
+        actionType: "reminder",
         runAt: executionTime.toISOString(),
         status: "pending",
         createdAt: new Date().toISOString(),
-        executedAt: null
+        executedAt: null,
+        executionAttempts: 0,
+        nextAttemptAt: null,
+        result: null,
+        lastError: null,
+        reminderAcknowledgedAt: null
     };
 
     tasks.push(task);
@@ -142,6 +161,62 @@ async function cancelTask(taskId) {
     };
 }
 
+function executeScheduledAction(task) {
+    const actionType = task.actionType || "reminder";
+
+    if (actionType !== "reminder") {
+        throw new Error("Unsupported scheduled action.");
+    }
+
+    return {
+        type: "reminder",
+        taskId: task.id,
+        title: task.title,
+        message: task.description
+    };
+}
+
+async function getPendingReminders() {
+    await initializeScheduler();
+
+    return tasks
+        .filter(task =>
+            task.status === "completed" &&
+            (task.actionType || "reminder") === "reminder" &&
+            task.result?.type === "reminder" &&
+            !task.reminderAcknowledgedAt
+        )
+        .map(task => ({
+            taskId: task.id,
+            title: task.result.title,
+            message: task.result.message,
+            executedAt: task.executedAt
+        }));
+}
+
+async function acknowledgeReminder(taskId) {
+    await initializeScheduler();
+
+    const task = tasks.find(item =>
+        item.id === taskId &&
+        item.status === "completed" &&
+        item.result?.type === "reminder" &&
+        !item.reminderAcknowledgedAt
+    );
+
+    if (!task) {
+        return {
+            success: false,
+            message: "Pending reminder not found."
+        };
+    }
+
+    task.reminderAcknowledgedAt = new Date().toISOString();
+    await saveTasks();
+
+    return { success: true };
+}
+
 async function executeDueTasks() {
     await initializeScheduler();
 
@@ -149,31 +224,66 @@ async function executeDueTasks() {
 
     const dueTasks = tasks.filter(task =>
         task.status === "pending" &&
-        new Date(task.runAt).getTime() <= now
+        new Date(task.runAt).getTime() <= now &&
+        (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= now)
     );
 
-    for (const task of dueTasks) {
-        task.status = "completed";
-        task.executedAt = new Date().toISOString();
-    }
+    const completedTasks = [];
 
-    if (dueTasks.length > 0) {
+    for (const task of dueTasks) {
+        const previousAttempts = task.executionAttempts || 0;
+        task.status = "executing";
+        task.executionAttempts = previousAttempts + 1;
+        task.lastError = null;
+
         try {
             await saveTasks();
         } catch (error) {
-            for (const task of dueTasks) {
-                task.status = "pending";
-                task.executedAt = null;
-            }
+            task.status = "pending";
+            task.executionAttempts = previousAttempts;
             throw error;
         }
 
+        try {
+            task.result = executeScheduledAction(task);
+            task.executedAt = new Date().toISOString();
+            task.nextAttemptAt = null;
+            task.status = "completed";
+            await saveTasks();
+            completedTasks.push(task);
+        } catch (error) {
+            task.result = null;
+            task.executedAt = null;
+            task.lastError = "Scheduled reminder execution failed.";
+
+            if (task.executionAttempts < 3) {
+                task.status = "pending";
+                const retryDelayMs = Math.min(
+                    5000 * (2 ** (task.executionAttempts - 1)),
+                    60_000
+                );
+                task.nextAttemptAt = new Date(
+                    Date.now() + retryDelayMs
+                ).toISOString();
+            } else {
+                task.status = "failed";
+                task.nextAttemptAt = null;
+            }
+
+            await saveTasks();
+            console.error(
+                `Scheduled reminder ${task.id} failed on attempt ${task.executionAttempts}.`
+            );
+        }
+    }
+
+    if (completedTasks.length > 0) {
         console.log(
-            `Scheduled ${dueTasks.length} task(s) marked completed.`
+            `Scheduled ${completedTasks.length} reminder(s) for in-app delivery.`
         );
     }
 
-    return dueTasks;
+    return completedTasks;
 }
 
 module.exports = {
@@ -181,5 +291,7 @@ module.exports = {
     createTask,
     getTasks,
     cancelTask,
-    executeDueTasks
+    executeDueTasks,
+    getPendingReminders,
+    acknowledgeReminder
 };
