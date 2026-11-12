@@ -10,6 +10,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
 - Validated email draft preparation with an explicit handoff to an installed email app; the agent never sends email.
 - Read-only public webpage retrieval and optional text search for URLs supplied by the user.
+- Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - JSON-backed one-time and recurring reminders with in-app delivery and best-effort Android background notifications.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
@@ -112,7 +113,7 @@ npm --prefix backend test
 .\gradlew.bat testDebugUnitTest
 ```
 
-The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover the example and speech-error mapping; microphone recognition, emulator interactions, and live Gemini calls must be verified separately.
+The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover memory ranking, browser URL validation, and speech-error mapping; WebView interaction, microphone recognition, emulator behavior, and live Gemini calls need device or service validation.
 
 ## Screenshots
 
@@ -126,7 +127,7 @@ Screenshots are not included yet.
 - Scheduled tasks support one-time and recurring reminders only. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. These schedules do not execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
 - Email drafts can be opened in an installed email app for review; the user must explicitly send there. There is no Gmail/OAuth integration, agent-side sending, or email search.
-- Browser access is read-only and limited to explicit public URLs; page interaction, authentication, and browser automation are not implemented.
+- The in-app browser supports user-controlled navigation and text extraction, but the agent cannot click page controls, submit forms, authenticate, or automate websites.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
 - Up to ten lexically relevant local memories are included in agent requests (500 characters each); if none match, the newest memories are used. Backend logs do not include their contents.

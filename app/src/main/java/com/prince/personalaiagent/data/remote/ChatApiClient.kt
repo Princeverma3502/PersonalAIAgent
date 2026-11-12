@@ -14,7 +14,8 @@ data class AgentResponse(
     val reply: String,
     val status: String,
     val toolName: String?,
-    val emailDrafts: List<EmailDraft> = emptyList()
+    val emailDrafts: List<EmailDraft> = emptyList(),
+    val browserUrl: String? = null
 )
 
 data class EmailDraft(
@@ -170,6 +171,7 @@ class ChatApiClient {
             // Read all tool executions from the backend.
             val toolCalls = json.optJSONArray("toolCalls")
             val emailDrafts = parseEmailDrafts(toolCalls)
+            val browserUrl = parsePublicPageUrl(toolCalls)
             val executedTools = mutableListOf<String>()
 
             if (toolCalls != null) {
@@ -220,7 +222,8 @@ class ChatApiClient {
                 ),
                 status = status,
                 toolName = toolName,
-                emailDrafts = emailDrafts
+                emailDrafts = emailDrafts,
+                browserUrl = browserUrl
             )
 
             if (responseCode !in 200..299) {
@@ -259,5 +262,27 @@ class ChatApiClient {
 
             EmailDraft(recipient, subject, body)
         }
+    }
+
+    private fun parsePublicPageUrl(toolCalls: JSONArray?): String? {
+        if (toolCalls == null) return null
+
+        for (index in 0 until toolCalls.length()) {
+            val tool = toolCalls.optJSONObject(index) ?: continue
+            if (
+                tool.optString("name") != "read_public_webpage" ||
+                tool.optString("status") != "success"
+            ) {
+                continue
+            }
+
+            val result = tool.optJSONObject("result")
+                ?.takeIf { it.optBoolean("success") }
+                ?: continue
+            val url = result.optString("url")
+            if (url.isNotBlank() && url != "null") return url
+        }
+
+        return null
     }
 }

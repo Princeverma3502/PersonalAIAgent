@@ -74,7 +74,7 @@ Each tool has a schema and a local argument validator. Handlers can report failu
 
 `draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim with an explicit “NOT SENT” label. The Android client can open it in a compatible email app using a user-initiated chooser. The app only prepopulates the external compose screen; the user must review and tap that app's send control. There is no Gmail/OAuth provider, agent-side send tool, or email search configured.
 
-`read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. The tool never clicks controls, submits forms, or authenticates.
+`read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. Successful results can be opened in an Android WebView; the user can navigate, scroll, and extract up to 10,000 characters of visible text. The WebView rejects non-HTTP(S) navigation, disables file/content access and mixed content, and exposes no JavaScript bridge. The agent still cannot click controls, submit forms, or authenticate.
 
 ## Memory persistence
 
@@ -101,4 +101,4 @@ The Compose control requests microphone permission only after a user tap. Speech
 - CORS allows the configured `ALLOWED_ORIGIN`, defaulting to `http://localhost:3000`.
 - `.env` files and backend scheduler data are ignored by Git; `.env.example` contains placeholders.
 - The current emulator setup uses cleartext HTTP and has no user authentication. Use HTTPS, authentication, deployment-specific origins, and secret management before exposing the service publicly.
-- No email provider/OAuth integration is configured. Browser retrieval is limited to explicit, public, read-only URLs; interactive automation is not implemented.
+- No email provider/OAuth integration is configured. The controlled browser is user-operated; agent-driven page actions and authentication are not implemented.

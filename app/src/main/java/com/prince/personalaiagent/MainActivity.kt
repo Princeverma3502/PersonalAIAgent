@@ -49,7 +49,8 @@ data class ChatMessage(
     val isUser: Boolean,
     val toolName: String? = null,
     val toolStatus: String? = null,
-    val emailDrafts: List<EmailDraft> = emptyList()
+    val emailDrafts: List<EmailDraft> = emptyList(),
+    val browserUrl: String? = null
 )
 
 class MainActivity : ComponentActivity() {
@@ -84,6 +85,12 @@ fun AgentScreen() {
 
     var showMemoryScreen by remember {
         mutableStateOf(false)
+    }
+    var showBrowserScreen by remember {
+        mutableStateOf(false)
+    }
+    var browserStartUrl by remember {
+        mutableStateOf<String?>(null)
     }
 
     var input by remember {
@@ -514,7 +521,8 @@ fun AgentScreen() {
                     isUser = false,
                     toolName = result.toolName,
                     toolStatus = result.status,
-                    emailDrafts = result.emailDrafts
+                    emailDrafts = result.emailDrafts,
+                    browserUrl = result.browserUrl
                 )
             )
 
@@ -531,6 +539,14 @@ fun AgentScreen() {
             }
         )
 
+    } else if (showBrowserScreen) {
+        BrowserScreen(
+            initialUrl = browserStartUrl,
+            onBack = {
+                showBrowserScreen = false
+                browserStartUrl = null
+            }
+        )
     } else {
 
         Scaffold(
@@ -546,6 +562,14 @@ fun AgentScreen() {
                             }
                         ) {
                             Text("Memories")
+                        }
+                        TextButton(
+                            onClick = {
+                                browserStartUrl = null
+                                showBrowserScreen = true
+                            }
+                        ) {
+                            Text("Browse")
                         }
                     }
                 )
@@ -563,6 +587,10 @@ fun AgentScreen() {
                     messages = messages,
                     isLoading = isLoading,
                     listState = listState,
+                    onOpenBrowser = { url ->
+                        browserStartUrl = url
+                        showBrowserScreen = true
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -619,6 +647,7 @@ internal fun ChatMessageList(
     messages: List<ChatMessage>,
     isLoading: Boolean,
     listState: LazyListState,
+    onOpenBrowser: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -744,6 +773,15 @@ internal fun ChatMessageList(
                                         "Review email draft ${index + 1} — not sent"
                                     }
                                 )
+                            }
+                        }
+
+                        message.browserUrl?.let { url ->
+                            TextButton(
+                                onClick = { onOpenBrowser(url) },
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Text("Open page in browser")
                             }
                         }
 

@@ -60,6 +60,7 @@ class ExampleInstrumentedTest {
                     messages = messages,
                     isLoading = false,
                     listState = listState,
+                    onOpenBrowser = {},
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("chat_messages")

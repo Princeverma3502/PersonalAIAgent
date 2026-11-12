@@ -13,6 +13,7 @@
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
 - Validated email draft preparation, with user-initiated handoff to a compatible email app; the agent never sends.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
+- Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
 - Debug APK build and backend/Android unit-test commands.
 
@@ -23,14 +24,14 @@
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
 - **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
-- **Webpage retrieval:** public URL content can be read and searched; interactive browsing and page actions are not implemented.
+- **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
 - **Recurring workflows:** cron reminders are supported, but recurring actions such as checking email and producing summaries are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
 ## Not implemented
 
 - Gmail/OAuth integration, agent-side email sending, and email search. Users can review and send a draft themselves in a compatible email app.
-- Interactive browser automation, authentication, and page actions such as clicking, scrolling, or submitting forms.
+- Agent-driven browser automation, authentication, and page actions such as clicking or submitting forms.
 - Actual execution of arbitrary scheduled actions or recurring workflows.
 - Arbitrary scheduled workflows/actions beyond reminders.
 - Production authentication, HTTPS deployment, and configurable Android API environments.
@@ -49,12 +50,14 @@
 | Recurring scheduler behavior | Isolated tests pass for five-field cron validation, minimum interval, IANA timezone, persistence, next-run advancement, reminder acknowledgement, and cancellation. |
 | Android background reminders | `.\gradlew.bat testDebugUnitTest assembleDebug` verifies WorkManager integration compiles and packages; no device notification or Doze-mode test has been completed. |
 | Memory retrieval | Unit tests verify relevance ranking, recent-memory fallback, and result limits. |
+| Browser URL policy | Unit tests verify HTTPS normalization and reject non-web schemes and embedded credentials. |
+| Android browser | `compileDebugAndroidTestKotlin` and APK build pass; interactive WebView behavior was not tested on a device. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |
-| `.\gradlew.bat testDebugUnitTest assembleDebug` | Passed after adding Android timezone context: 2 tests, 0 failures. |
+| `.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` | Passed: 7 Android unit tests, 0 failures; instrumentation tests compiled but were not run on a device. |
 | Emulator/device tests | Emulator is present, but no interactive app test or speech-recognition test was completed. |
-| Debug APK | Rebuilt at `app/build/outputs/apk/debug/app-debug.apk`; 12,001,939 bytes at the last inspected build. |
+| Debug APK | Rebuilt at `app/build/outputs/apk/debug/app-debug.apk`; 12,332,563 bytes. |
 
 ## Known limitations and risks
 
@@ -67,8 +70,8 @@
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
 - Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
-- Webpage access is read-only and requires the exact URL in the user's message. A smoke request to example.com passed; interactive automation is not implemented.
-- The Android unit-test suite currently contains only a basic example test; feature-specific Android tests and emulator testing remain.
+- Backend webpage retrieval requires the exact URL in the user's message; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.
+- Browser URL policy tests cover HTTPS normalization and blocking non-web schemes and embedded credentials. Device-level WebView behavior remains untested.
 
 ## Recommended next steps
 
