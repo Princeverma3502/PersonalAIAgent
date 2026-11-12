@@ -17,3 +17,6 @@ local.properties
 
 # Kotlin
 .kotlin/
+
+# Persistent application data
+data/

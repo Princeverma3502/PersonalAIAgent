@@ -7,28 +7,30 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
 const { runAgentTurn } = require("./agent/agentService");
+const {
+    getUserFriendlyGeminiError,
+    safeProviderError
+} = require("./agent/geminiError");
+const { initializeScheduler } = require("./scheduler/taskScheduler");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const apiKey = process.env.GEMINI_API_KEY;
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is missing from .env");
-}
-
-const ai = new GoogleGenAI({ apiKey });
 const AI_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.6-flash",
-    "gemini-2.5-flash-lite"
+    "gemini-3.5-flash-lite"
 ];
 
-
 app.use(helmet());
+
 app.use(cors({
     origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000"
 }));
+
 app.use(express.json({ limit: "20kb" }));
 
 app.use("/api", rateLimit({
@@ -38,16 +40,28 @@ app.use("/api", rateLimit({
     legacyHeaders: false
 }));
 
+// Health check
 app.get("/health", (req, res) => {
-    res.json({
-        status: "success",
-        message: "Personal AI Agent backend is running"
+    const configured = Boolean(ai);
+
+    res.status(configured ? 200 : 503).json({
+        status: configured ? "success" : "degraded",
+        message: configured
+            ? "Personal AI Agent backend is running"
+            : "Backend is running, but GEMINI_API_KEY is not configured."
     });
 });
 
-
+// Basic AI chat endpoint
 app.post("/api/chat", async (req, res) => {
-    const { message } = req.body;
+    const { message } = req.body || {};
+
+    if (!ai) {
+        return res.status(503).json({
+            success: false,
+            error: "AI service credentials are not configured on the backend."
+        });
+    }
 
     if (
         typeof message !== "string" ||
@@ -67,7 +81,7 @@ app.post("/api/chat", async (req, res) => {
             console.log(`Trying AI model: ${model}`);
 
             const response = await ai.models.generateContent({
-                model: model,
+                model,
                 contents: message.trim()
             });
 
@@ -76,45 +90,72 @@ app.post("/api/chat", async (req, res) => {
             return res.json({
                 success: true,
                 reply: response.text,
-                model: model
+                model
             });
 
         } catch (error) {
             lastError = error;
+            const details = safeProviderError(error);
 
-            let status = error.status;
+            console.error(`Gemini chat model ${model} failed:`, JSON.stringify({
+                category: details.category,
+                code: details.code,
+                message: details.message,
+                retryInfo: details.retryInfo
+            }));
 
-            // Some SDK errors contain the HTTP status inside JSON text.
-            if (!status && error.message) {
-                try {
-                    status = JSON.parse(error.message)?.error?.code;
-                } catch (_) {
-                    status = undefined;
-                }
-            }
-
-            console.error(`Model ${model} failed. Status: ${status}`);
-            console.error("Reason:", error.message);
-
-            // Try another model for temporary service or quota errors.
-            if (![429, 500, 502, 503, 504].includes(Number(status))) {
+            if (![
+                "model_not_found",
+                "quota_exhausted",
+                "rate_limited",
+                "temporary_overload"
+            ].includes(details.category)) {
                 break;
             }
 
-            console.log("Switching to the next available model...");
+            if (details.category === "temporary_overload") {
+                await new Promise(resolve => setTimeout(
+                    resolve,
+                    Math.min(Math.max(details.retryDelayMs || 300, 250), 1200)
+                ));
+            }
         }
     }
 
-    console.error("All configured Gemini models failed:", lastError?.message);
+    console.error(
+        "All configured Gemini models failed:",
+        lastError?.message || "Unknown error"
+    );
 
     return res.status(502).json({
         success: false,
-        error: "All available AI models are currently busy or unavailable. Please try again shortly."
+        error: getUserFriendlyGeminiError(lastError)
     });
 });
 
+// Personal AI Agent endpoint
 app.post("/api/agent", async (req, res) => {
-    const { message } = req.body;
+    if (!ai) {
+        return res.status(503).json({
+            success: false,
+            reply: "AI service credentials are not configured on the backend.",
+            status: "failed",
+            toolCall: null,
+            toolCalls: []
+        });
+    }
+
+    const { message, memories } = req.body || {};
+
+    // Validate and sanitize memories before using them.
+    const safeMemories = Array.isArray(memories)
+        ? memories
+            .filter(memory => typeof memory === "string")
+            .map(memory => memory.trim())
+            .filter(Boolean)
+            .slice(0, 10)
+            .map(memory => memory.slice(0, 500))
+        : [];
 
     if (
         typeof message !== "string" ||
@@ -125,31 +166,74 @@ app.post("/api/agent", async (req, res) => {
             success: false,
             reply: "Please provide a valid message (maximum 4000 characters).",
             status: "failed",
-            toolCall: null
+            toolCall: null,
+            toolCalls: []
         });
     }
 
     try {
+        console.log("[AGENT] Starting agent execution.");
+
         const result = await runAgentTurn({
             ai,
             message,
+            memories: safeMemories,
             modelList: AI_MODELS
         });
 
+        console.log(
+            "[AGENT] Execution finished. Status:",
+            result.status
+        );
+
         return res.status(result.success ? 200 : 502).json(result);
+
     } catch (error) {
-        console.error("Agent endpoint failed:", error?.message || "Unknown agent error");
+        console.error("[AGENT] Endpoint error:", JSON.stringify(
+            safeProviderError(error)
+        ));
 
         return res.status(502).json({
             success: false,
             reply: "The AI service is currently unavailable. Please try again shortly.",
             status: "failed",
-            toolCall: null
+            toolCall: null,
+            toolCalls: []
         });
     }
 });
 
+app.use((error, req, res, next) => {
+    if (error?.type === "entity.too.large") {
+        return res.status(413).json({
+            success: false,
+            error: "Request body must be 20 KB or smaller."
+        });
+    }
 
-app.listen(PORT, () => {
-    console.log(`Personal AI Agent backend running on port ${PORT}`);
+    if (error instanceof SyntaxError && error.status === 400) {
+        return res.status(400).json({
+            success: false,
+            error: "Request body must contain valid JSON."
+        });
+    }
+
+    console.error("[HTTP] Request failed:", error?.name || "UnknownError");
+    return res.status(500).json({
+        success: false,
+        error: "The server could not process this request."
+    });
 });
+
+// Initialize scheduler and start server.
+initializeScheduler()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Personal AI Agent backend running on port ${PORT}`);
+            console.log("Task scheduler initialized successfully.");
+        });
+    })
+    .catch(error => {
+        console.error("Failed to initialize task scheduler:", error);
+        process.exit(1);
+    });
