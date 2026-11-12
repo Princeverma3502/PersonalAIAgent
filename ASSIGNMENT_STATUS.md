@@ -11,7 +11,7 @@
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
-- Validated email draft preparation with deterministic user-visible content and an explicit not-sent status.
+- Validated email draft preparation, with user-initiated handoff to a compatible email app; the agent never sends.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
 - Debug APK build and backend/Android unit-test commands.
@@ -29,7 +29,7 @@
 
 ## Not implemented
 
-- Gmail/OAuth provider integration, email sending, and email search. Drafts are local-only and never sent.
+- Gmail/OAuth integration, agent-side email sending, and email search. Users can review and send a draft themselves in a compatible email app.
 - Interactive browser automation, authentication, and page actions such as clicking, scrolling, or submitting forms.
 - Actual execution of arbitrary scheduled actions or recurring workflows.
 - Arbitrary scheduled workflows/actions beyond reminders.
@@ -66,7 +66,7 @@
 - Room migration behavior has not been exercised.
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
-- Email drafts are not persisted or sent. Gmail OAuth/provider integration and a UI confirmation flow are required before enabling sending.
+- Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
 - Webpage access is read-only and requires the exact URL in the user's message. A smoke request to example.com passed; interactive automation is not implemented.
 - The Android unit-test suite currently contains only a basic example test; feature-specific Android tests and emulator testing remain.
 

@@ -13,7 +13,14 @@ import java.util.TimeZone
 data class AgentResponse(
     val reply: String,
     val status: String,
-    val toolName: String?
+    val toolName: String?,
+    val emailDrafts: List<EmailDraft> = emptyList()
+)
+
+data class EmailDraft(
+    val to: String,
+    val subject: String,
+    val body: String
 )
 
 data class AgentReminder(
@@ -162,6 +169,7 @@ class ChatApiClient {
 
             // Read all tool executions from the backend.
             val toolCalls = json.optJSONArray("toolCalls")
+            val emailDrafts = parseEmailDrafts(toolCalls)
             val executedTools = mutableListOf<String>()
 
             if (toolCalls != null) {
@@ -211,7 +219,8 @@ class ChatApiClient {
                     "The AI returned an empty response."
                 ),
                 status = status,
-                toolName = toolName
+                toolName = toolName,
+                emailDrafts = emailDrafts
             )
 
             if (responseCode !in 200..299) {
@@ -222,6 +231,33 @@ class ChatApiClient {
 
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun parseEmailDrafts(toolCalls: JSONArray?): List<EmailDraft> {
+        if (toolCalls == null) return emptyList()
+
+        return (0 until toolCalls.length()).mapNotNull { index ->
+            val tool = toolCalls.optJSONObject(index) ?: return@mapNotNull null
+            if (
+                tool.optString("name") != "draft_email" ||
+                tool.optString("status") != "success"
+            ) {
+                return@mapNotNull null
+            }
+
+            val result = tool.optJSONObject("result")
+                ?.takeIf { it.optBoolean("success") }
+                ?: return@mapNotNull null
+            val draft = result.optJSONObject("draft") ?: return@mapNotNull null
+            val recipient = draft.optString("to").takeIf { it.isNotBlank() && it != "null" }
+                ?: return@mapNotNull null
+            val subject = draft.optString("subject").takeIf { it != "null" }
+                ?: return@mapNotNull null
+            val body = draft.optString("body").takeIf { it.isNotBlank() && it != "null" }
+                ?: return@mapNotNull null
+
+            EmailDraft(recipient, subject, body)
         }
     }
 }

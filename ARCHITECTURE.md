@@ -72,7 +72,7 @@ The registry exposes:
 
 Each tool has a schema and a local argument validator. Handlers can report failure with `success: false` or throw; both paths become failed tool calls and their error is sent back to Gemini. The response preserves the complete tool-call history and a compatibility `toolCall` field for the last call.
 
-`draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim to the user with an explicit “NOT SENT” label. There is no email provider, send tool, or search tool configured; sending is intentionally unavailable until a provider and a user-confirmation flow exist.
+`draft_email` validates the recipient, subject, and complete message, then returns the draft verbatim with an explicit “NOT SENT” label. The Android client can open it in a compatible email app using a user-initiated chooser. The app only prepopulates the external compose screen; the user must review and tap that app's send control. There is no Gmail/OAuth provider, agent-side send tool, or email search configured.
 
 `read_public_webpage` requires the exact URL to appear in the user's message. The backend permits only HTTP(S) on standard ports, rejects private/special IP ranges, resolves and pins public DNS addresses, revalidates redirects, and applies request, redirect, body-size, and output-size limits. Only HTML, XHTML, and plain-text responses are read. The page result is returned to the user without another model/tool round, so retrieved text cannot initiate follow-up tool actions. The tool never clicks controls, submits forms, or authenticates.
 

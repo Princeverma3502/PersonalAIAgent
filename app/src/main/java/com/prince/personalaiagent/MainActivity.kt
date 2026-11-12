@@ -2,7 +2,10 @@
 package com.prince.personalaiagent
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -30,6 +33,7 @@ import com.prince.personalaiagent.data.local.MemoryRepository
 import com.prince.personalaiagent.data.remote.AgentApiException
 import com.prince.personalaiagent.data.remote.AgentResponse
 import com.prince.personalaiagent.data.remote.ChatApiClient
+import com.prince.personalaiagent.data.remote.EmailDraft
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
 import dev.jeziellago.compose.markdowntext.MarkdownText
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +48,8 @@ data class ChatMessage(
     val text: String,
     val isUser: Boolean,
     val toolName: String? = null,
-    val toolStatus: String? = null
+    val toolStatus: String? = null,
+    val emailDrafts: List<EmailDraft> = emptyList()
 )
 
 class MainActivity : ComponentActivity() {
@@ -508,7 +513,8 @@ fun AgentScreen() {
                     text = result.reply,
                     isUser = false,
                     toolName = result.toolName,
-                    toolStatus = result.status
+                    toolStatus = result.status,
+                    emailDrafts = result.emailDrafts
                 )
             )
 
@@ -615,6 +621,8 @@ internal fun ChatMessageList(
     listState: LazyListState,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    var emailLaunchErrorMessageId by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(messages.size, isLoading) {
 
@@ -696,6 +704,62 @@ internal fun ChatMessageList(
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+
+                        message.emailDrafts.forEachIndexed { index, draft ->
+                            TextButton(
+                                onClick = {
+                                    emailLaunchErrorMessageId = null
+                                    val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                        data = Uri.parse(
+                                            "mailto:${Uri.encode(draft.to, "@")}"
+                                        )
+                                        putExtra(Intent.EXTRA_EMAIL, arrayOf(draft.to))
+                                        putExtra(Intent.EXTRA_SUBJECT, draft.subject)
+                                        putExtra(Intent.EXTRA_TEXT, draft.body)
+                                    }
+
+                                    if (emailIntent.resolveActivity(context.packageManager) == null) {
+                                        emailLaunchErrorMessageId = message.id
+                                    } else {
+                                        try {
+                                            context.startActivity(
+                                                Intent.createChooser(
+                                                    emailIntent,
+                                                    "Review email draft"
+                                                )
+                                            )
+                                        } catch (_: ActivityNotFoundException) {
+                                            emailLaunchErrorMessageId = message.id
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Text(
+                                    if (message.emailDrafts.size == 1) {
+                                        "Review in email app — not sent"
+                                    } else {
+                                        "Review email draft ${index + 1} — not sent"
+                                    }
+                                )
+                            }
+                        }
+
+                        if (
+                            message.emailDrafts.isNotEmpty() &&
+                            emailLaunchErrorMessageId == message.id
+                        ) {
+                            Text(
+                                text = "No compatible email app was found. The draft above has not been sent.",
+                                modifier = Modifier.padding(
+                                    start = 14.dp,
+                                    end = 14.dp,
+                                    bottom = 12.dp
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
                     }
