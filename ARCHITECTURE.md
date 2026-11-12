@@ -101,8 +101,10 @@ Memories are kept only in the Android Room database. Local command phrases invok
 
 - The Android client measures each agent request with `SystemClock.elapsedRealtime()` and samples process proportional set size (PSS) when the response is displayed. These values appear below the assistant response; PSS is a point-in-time process estimate, not peak memory.
 - The backend records scheduled execution delay as the elapsed milliseconds from the requested run time to completion. The value is persisted and returned with reminder results.
-- These are per-event diagnostics, not an aggregate benchmark. Live Gemini latency and physical-device memory measurements have not been collected in this validation pass.
+- `npm --prefix backend run benchmark` runs a bounded mock benchmark and reports mean, p50, and p95 agent-response and scheduled-workflow latency, plus backend RSS and heap deltas. It does not call Gemini or access the network.
+- A 20-iteration Windows x64 / Node 22.17.1 run measured mock agent response p50/p95 of 0.40/4.74 ms, scheduled-workflow execution p50/p95 of 11.44/21.03 ms, and RSS/heap deltas of +2.46/+1.28 MiB. These synthetic values cover local orchestration and JSON persistence, not provider latency or Android PSS; live Gemini latency and physical-device memory have not been measured.
 - The lexical memory ranker currently scans saved memories in memory. If the collection grows substantially, Room full-text search or a persisted token index is the next optimization to evaluate.
+- The scheduler rewrites its JSON file at task state transitions. If task volume or measured persistence latency grows, batching writes or moving scheduler state to SQLite is a targeted optimization to evaluate.
 
 ## Voice input
 

@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
+    "benchmark": "node scripts/benchmark.js",
     "start": "node src/server.js"
   },
   "keywords": [],

@@ -25,7 +25,7 @@
 - **Gemini integration:** fallback and tool recovery are covered with mocks; a successful live Gemini request was not verified.
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
 - **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
-- **Performance analysis:** Per-event latency, process PSS, and scheduler delay are surfaced. A representative live Gemini/device benchmark has not yet been collected.
+- **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
 - **Scheduled workflow scope:** webpage summaries are supported only for explicit public URLs; email checks and other arbitrary actions are not implemented.
@@ -44,7 +44,7 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 33 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
+| `npm --prefix backend test` | Passed: 36 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
 | Public webpage retrieval | Tests pass for URL/IP restrictions, redirect validation, text extraction, search, and tool registration. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
@@ -55,7 +55,7 @@
 | Memory retrieval | Unit tests verify relevance ranking, recent-memory fallback, and result limits. |
 | Browser URL policy | Unit tests verify HTTPS normalization and reject non-web schemes and embedded credentials. |
 | Android browser | `compileDebugAndroidTestKotlin` and APK build pass; interactive WebView behavior was not tested on a device. |
-| Performance diagnostics | Android request duration and process PSS are displayed; scheduler delay is persisted and returned with reminders. No live Gemini/device baseline has been collected. |
+| Performance diagnostics and benchmark | `npm --prefix backend run benchmark` passed (20 mock iterations): agent response p50/p95 0.40/4.74 ms; scheduled workflow p50/p95 11.44/21.03 ms; RSS/heap delta +2.46/+1.28 MiB on Windows x64 / Node 22.17.1. Mock values exclude live Gemini/network and Android device memory. |
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |
@@ -76,7 +76,7 @@
 - Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
 - Backend webpage retrieval requires the exact URL in the user's message; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.
 - Browser URL policy tests cover HTTPS normalization and blocking non-web schemes and embedded credentials. Device-level WebView behavior remains untested.
-- Performance values are available per event, but median/percentile measurements from a live backend and target device remain to be collected.
+- The local benchmark uses mocked model responses and excludes real provider/network latency; live Gemini latency and target-device PSS measurements remain to be collected.
 
 ## Recommended next steps
 

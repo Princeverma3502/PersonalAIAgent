@@ -112,9 +112,12 @@ From the repository root in PowerShell:
 ```powershell
 npm --prefix backend test
 .\gradlew.bat testDebugUnitTest
+npm --prefix backend run benchmark
 ```
 
 The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover memory ranking, browser URL validation, and speech-error mapping; WebView interaction, microphone recognition, emulator behavior, and live Gemini calls need device or service validation.
+
+The benchmark runs 20 mock agent requests and scheduled webpage workflows by default. It reports mean, p50, and p95 latency plus backend RSS and heap deltas. It makes no network requests and does not measure live Gemini or Android performance; these figures are a reproducible local baseline, not production latency.
 
 ## Screenshots
 
