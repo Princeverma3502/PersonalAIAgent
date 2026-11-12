@@ -66,6 +66,22 @@ The health endpoint remains available without an API key but reports a degraded 
 
 The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`. The Android client uses the emulator host alias `10.0.2.2` and local HTTP; this setup is for development, not production deployment.
 
+### Configure the Android backend URL
+
+Debug builds default to `http://10.0.2.2:3000` for the Android emulator. To point a debug build at a backend reachable from a physical device, pass its development-machine URL:
+
+```powershell
+.\gradlew.bat assembleDebug -PPERSONAL_AI_DEBUG_API_BASE_URL=http://192.168.1.20:3000
+```
+
+Release builds use a safe placeholder unless configured. Set an HTTPS backend origin when building a release APK:
+
+```powershell
+.\gradlew.bat assembleRelease -PPERSONAL_AI_RELEASE_API_BASE_URL=https://agent.example.com
+```
+
+The URL must be an HTTP(S) origin without credentials, query, or fragment. HTTP is allowed only for debug builds; release builds reject non-HTTPS URLs and disable cleartext traffic. A real release still needs a deployed backend and backend authentication.
+
 ## API endpoints
 
 ### `GET /health`
@@ -133,7 +149,7 @@ Screenshots are not included yet.
 - Email drafts can be opened in an installed email app for review; the user must explicitly send there. There is no Gmail/OAuth integration, agent-side sending, or email search.
 - The in-app browser supports user-controlled navigation and text extraction, but the agent cannot click page controls, submit forms, authenticate, or automate websites.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
-- The debug client uses cleartext HTTP and a fixed emulator URL. A production deployment needs HTTPS, configurable environments, and an authenticated backend.
+- Debug builds permit cleartext HTTP for local development. Release builds require an HTTPS backend URL and disable cleartext traffic, but production still needs a deployed backend and backend authentication.
 - Up to ten lexically relevant local memories are included in agent requests (500 characters each); if none match, the newest memories are used. Backend logs do not include their contents.
 - Gemini model availability and quota are controlled by the configured API account.
 - When a tool fails and the model retries the same tool in the next round with corrected arguments, the agent can treat the retry as resolving the earlier failure. If multiple same-tool failures are outstanding, an unrelated later success does not clear them. Tool outcome correlation remains a heuristic because the provider does not supply a stable retry identifier.

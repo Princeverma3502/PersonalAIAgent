@@ -2,6 +2,7 @@
 package com.prince.personalaiagent.data.remote
 
 import android.os.SystemClock
+import com.prince.personalaiagent.BuildConfig
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -41,8 +42,9 @@ class AgentApiException(
 class ChatApiClient {
 
     companion object {
-        private const val BASE_URL = "http://10.0.2.2:3000/api/agent"
-        private const val REMINDERS_URL = "http://10.0.2.2:3000/api/reminders"
+        private val API_BASE_URL = BuildConfig.API_BASE_URL.trimEnd('/')
+        private val BASE_URL = "$API_BASE_URL/api/agent"
+        private val REMINDERS_URL = "$API_BASE_URL/api/reminders"
         private const val CONNECT_TIMEOUT = 15000
         private const val READ_TIMEOUT = 60000
     }

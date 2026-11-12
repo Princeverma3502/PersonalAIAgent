@@ -20,7 +20,7 @@ Compose UI
 - `MainActivity.kt` hosts the Compose screen and chat state. It handles memory-specific command phrases locally and sends other messages to the backend.
 - `MemoryScreen.kt` displays the saved memories and confirms deletion.
 - `MemoryEntity`, `MemoryDao`, `MemoryDatabase`, and `MemoryRepository` define the Room persistence layer. The database is named `personal_agent_memory`.
-- `ChatApiClient.kt` sends JSON to the emulator address `http://10.0.2.2:3000/api/agent`, includes at most ten short memories, reads all `toolCalls`, and raises a response exception for non-2xx HTTP codes.
+- `ChatApiClient.kt` sends JSON to the build-configured backend origin, includes at most ten short memories, reads all `toolCalls`, and raises a response exception for non-2xx HTTP codes. Debug builds default to the emulator host; release builds require an HTTPS origin.
 - The network call runs on `Dispatchers.IO`; loading and error messages are shown in the Compose UI.
 - `VoiceInput.kt` requests `RECORD_AUDIO` at runtime, starts a one-shot `SpeechRecognizer` session on user action, places recognized text into the editable field, and cancels/destroys the recognizer when the control leaves composition. It does not store audio or listen in the background.
 
@@ -115,5 +115,5 @@ The Compose control requests microphone permission only after a user tap. Speech
 - Helmet, a 20 KB JSON limit, request validation, and a rate limit of 20 API requests per minute are configured.
 - CORS allows the configured `ALLOWED_ORIGIN`, defaulting to `http://localhost:3000`.
 - `.env` files and backend scheduler data are ignored by Git; `.env.example` contains placeholders.
-- The current emulator setup uses cleartext HTTP and has no user authentication. Use HTTPS, authentication, deployment-specific origins, and secret management before exposing the service publicly.
+- Debug builds permit cleartext HTTP for local development. Release builds disable cleartext traffic and require an HTTPS origin configured with `PERSONAL_AI_RELEASE_API_BASE_URL`. The backend still has no user authentication; add authentication and deployment-specific secret management before exposing it publicly.
 - No email provider/OAuth integration is configured. The controlled browser is user-operated; agent-driven page actions and authentication are not implemented.

@@ -16,6 +16,7 @@
 - One-time and recurring scheduled public-webpage summaries for exact URLs supplied by the user; page retrieval and Gemini summarization run at the scheduled time and deliver results through reminders.
 - Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - Per-request agent latency and process PSS diagnostics, plus persisted scheduler delay measurements.
+- Build-configurable Android backend origins; release builds require HTTPS and disable cleartext traffic.
 - Backend security middleware, request-size and rate limits, input validation, and placeholder environment template.
 - Debug APK build and backend/Android unit-test commands.
 
@@ -24,7 +25,7 @@
 - **Scheduled tasks:** one-time and recurring reminders and read-only public-webpage summaries are supported. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. The backend must be reachable and notification permission granted for background notifications. Webpage workflows require the backend and Gemini to be available when due.
 - **Gemini integration:** fallback and tool recovery are covered with mocks; a successful live Gemini request was not verified.
 - **Voice input:** permission and error handling are implemented and unit-tested; actual microphone recognition was not tested on a device.
-- **Android runtime:** Kotlin compilation, unit tests, and APK packaging passed. No interactive emulator or physical-device pass was completed.
+- **Android runtime:** Kotlin compilation, unit tests, debug APK packaging, and release APK packaging passed. No interactive emulator or physical-device pass was completed.
 - **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** public webpage retrieval and a user-controlled in-app browser are implemented. The agent cannot click controls, submit forms, authenticate, or autonomously browse.
@@ -36,7 +37,7 @@
 - Gmail/OAuth integration, agent-side email sending, and email search. Users can review and send a draft themselves in a compatible email app.
 - Agent-driven browser automation, authentication, and page actions such as clicking or submitting forms.
 - Gmail/OAuth-backed scheduled email checks or other arbitrary scheduled actions.
-- Production authentication, HTTPS deployment, and configurable Android API environments.
+- Production backend authentication and deployment.
 - Screenshots.
 
 ## Verification results
@@ -60,6 +61,7 @@
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Valid live `POST /api/agent` | Not verified; the local backend was not listening when attempted, so Gemini was not reached. |
 | `.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` | Passed: 7 Android unit tests, 0 failures; instrumentation tests compiled but were not run on a device. |
+| Android API environment configuration | Debug custom HTTP URL generated successfully; release APK built with HTTPS configuration; release cleartext traffic disabled and HTTP release URL rejected. |
 | Emulator/device tests | Emulator is present, but no interactive app test or speech-recognition test was completed. |
 | Debug APK | Rebuilt at `app/build/outputs/apk/debug/app-debug.apk`; 12,334,276 bytes. |
 
@@ -69,7 +71,7 @@
 - Recurrence is limited to reminders and webpage summaries and at least five minutes apart. It does not run email checks or arbitrary actions, and the backend process must be alive at execution time.
 - Reminder delivery requires the backend to be running and reachable. Background delivery also requires notification permission and is subject to Android scheduling and battery policies.
 - Speech recognition depends on device service availability and has not been exercised on an emulator.
-- The backend has no authentication and the Android development client uses cleartext HTTP.
+- The backend has no authentication. Debug permits cleartext HTTP for development; release builds enforce HTTPS but still require a deployed, authenticated backend.
 - Room migration behavior has not been exercised.
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
