@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -23,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import java.util.Locale
+
+private const val SPEECH_RECOGNIZER_TAG = "VoiceInput"
 
 @Composable
 fun VoiceInputControl(
@@ -48,8 +51,20 @@ fun VoiceInputControl(
     }
 
     fun startListening() {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            Log.w(SPEECH_RECOGNIZER_TAG, "No speech-recognition service is available")
+            isListening = false
+            errorMessage = "Speech recognition is unavailable on this device."
+            return
+        }
+
         val speechRecognizer = recognizer
         if (speechRecognizer == null) {
+            Log.w(
+                SPEECH_RECOGNIZER_TAG,
+                "Speech-recognition service became available after control initialization"
+            )
+            isListening = false
             errorMessage = "Speech recognition is unavailable on this device."
             return
         }
@@ -58,33 +73,61 @@ fun VoiceInputControl(
         isListening = true
         try {
             speechRecognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = Unit
-                override fun onBeginningOfSpeech() = Unit
+                override fun onReadyForSpeech(params: Bundle?) {
+                    Log.d(SPEECH_RECOGNIZER_TAG, "onReadyForSpeech")
+                }
+
+                override fun onBeginningOfSpeech() {
+                    Log.d(SPEECH_RECOGNIZER_TAG, "onBeginningOfSpeech")
+                }
+
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
-                override fun onEndOfSpeech() = Unit
+
+                override fun onEndOfSpeech() {
+                    Log.d(SPEECH_RECOGNIZER_TAG, "onEndOfSpeech")
+                }
 
                 override fun onError(error: Int) {
                     isListening = false
-                    errorMessage = speechErrorMessage(error)
+                    val message = speechErrorMessage(error)
+                    Log.w(
+                        SPEECH_RECOGNIZER_TAG,
+                        "onError code=$error message=$message"
+                    )
+                    errorMessage = message
                 }
 
                 override fun onResults(results: Bundle?) {
                     isListening = false
-                    val recognizedText = results
-                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        ?.firstOrNull()
-                        ?.trim()
+                    val candidates = results?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION
+                    )
+                    val recognizedText = firstRecognizedSpeechResult(candidates)
+                    Log.i(
+                        SPEECH_RECOGNIZER_TAG,
+                        "onResults candidateCount=${candidates?.size ?: 0}, " +
+                            "hasUsableText=${recognizedText != null}"
+                    )
 
                     if (recognizedText.isNullOrEmpty()) {
-                        errorMessage = "No speech was recognized. Please try again."
+                        errorMessage = "No usable speech transcription was returned. Please try again."
                     } else {
+                        errorMessage = null
                         latestOnTextRecognized(recognizedText)
                     }
                 }
 
-                override fun onPartialResults(partialResults: Bundle?) = Unit
-                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val count = partialResults
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.size ?: 0
+                    Log.d(SPEECH_RECOGNIZER_TAG, "onPartialResults candidateCount=$count")
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) {
+                    Log.d(SPEECH_RECOGNIZER_TAG, "onEvent type=$eventType")
+                }
             })
 
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -97,11 +140,22 @@ fun VoiceInputControl(
                     Locale.getDefault().toLanguageTag()
                 )
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             }
+            Log.d(
+                SPEECH_RECOGNIZER_TAG,
+                "Starting recognition language=${Locale.getDefault().toLanguageTag()} " +
+                    "model=${RecognizerIntent.LANGUAGE_MODEL_FREE_FORM}"
+            )
             speechRecognizer.startListening(intent)
-        } catch (_: RuntimeException) {
+        } catch (exception: SecurityException) {
             isListening = false
-            errorMessage = "Could not start speech recognition. Please try again."
+            Log.e(SPEECH_RECOGNIZER_TAG, "Missing permission while starting recognition", exception)
+            errorMessage = "Microphone permission is required for voice input."
+        } catch (exception: IllegalStateException) {
+            isListening = false
+            Log.e(SPEECH_RECOGNIZER_TAG, "Speech recognizer could not start", exception)
+            errorMessage = "Speech recognition could not start. Please try again."
         }
     }
 
@@ -156,17 +210,22 @@ fun VoiceInputControl(
     }
 }
 
+internal fun firstRecognizedSpeechResult(results: List<String>?): String? =
+    results?.firstOrNull { it.isNotBlank() }?.trim()
+
 internal fun speechErrorMessage(error: Int): String = when (error) {
     SpeechRecognizer.ERROR_AUDIO ->
         "There was a microphone audio error. Please try again."
     SpeechRecognizer.ERROR_CLIENT ->
-        "Speech recognition was cancelled."
+        "Speech recognition stopped or encountered a client error. Please try again."
     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
         "Microphone permission is required for voice input."
-    SpeechRecognizer.ERROR_NETWORK,
+    SpeechRecognizer.ERROR_NETWORK ->
+        "Speech recognition could not reach its network service. Check your connection."
     SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-        "Speech recognition could not reach its service."
-    SpeechRecognizer.ERROR_NO_MATCH,
+        "The speech-recognition network request timed out. Please try again."
+    SpeechRecognizer.ERROR_NO_MATCH ->
+        "Speech was not understood. Speak clearly and try again."
     SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
         "No speech was detected. Please try again."
     SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->

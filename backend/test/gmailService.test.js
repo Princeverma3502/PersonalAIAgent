@@ -8,15 +8,14 @@ const gmailService = require("../src/gmail/gmailService");
 const { getToolDeclaration, validateToolName } =
     require("../src/agent/tools");
 
-const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const LEGACY_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 function makeFakeGoogleApi(options = {}) {
     const calls = {
         authorizationOptions: [],
         list: [],
-        get: [],
-        send: []
+        get: []
     };
     const api = {
         auth: {
@@ -38,7 +37,7 @@ function makeFakeGoogleApi(options = {}) {
                         tokens: options.issuedTokens || {
                             access_token: `token-for-${code}`,
                             refresh_token: "refresh-token",
-                            scope: `${SEND_SCOPE} ${READ_SCOPE}`
+                            scope: READ_SCOPE
                         }
                     });
                 }
@@ -66,18 +65,6 @@ function makeFakeGoogleApi(options = {}) {
                                 id: args.id,
                                 snippet: "",
                                 payload: { headers: [] }
-                            }
-                        };
-                    },
-                    send: async args => {
-                        calls.send.push(args);
-                        const { userId, requestBody } = args;
-                        assert.equal(userId, "me");
-                        assert.ok(requestBody.raw);
-                        return {
-                            data: {
-                                id: "gmail-message-123",
-                                threadId: "thread-456"
                             }
                         };
                     }
@@ -159,14 +146,15 @@ test("gmail status reports unconfigured state before OAuth setup", async () => {
     }
 });
 
-test("Gmail reauthorization asks for send and readonly scopes", async () => {
+test("Gmail authorization requests readonly access only", async () => {
     await withGmailService({}, async (service, api) => {
         const url = service.buildAuthorizationUrl();
         const scopes = api.calls.authorizationOptions[0].scope;
 
         assert.ok(url.includes(encodeURIComponent(READ_SCOPE)));
         assert.equal(api.calls.authorizationOptions[0].prompt, "consent");
-        assert.deepEqual(scopes, [SEND_SCOPE, READ_SCOPE]);
+        assert.equal(api.calls.authorizationOptions[0].include_granted_scopes, false);
+        assert.deepEqual(scopes, [READ_SCOPE]);
     });
 });
 
@@ -175,11 +163,11 @@ test("Gmail reauthorization replaces tokens and preserves an existing refresh to
         tokens: {
             access_token: "old-access-token",
             refresh_token: "old-refresh-token",
-            scope: SEND_SCOPE
+            scope: LEGACY_SEND_SCOPE
         },
         issuedTokens: {
             access_token: "new-access-token",
-            scope: `${SEND_SCOPE} ${READ_SCOPE}`
+            scope: READ_SCOPE
         }
     }, async service => {
         await service.exchangeCodeForTokens("authorization-code");
@@ -187,7 +175,7 @@ test("Gmail reauthorization replaces tokens and preserves an existing refresh to
 
         assert.equal(savedTokens.access_token, "new-access-token");
         assert.equal(savedTokens.refresh_token, "old-refresh-token");
-        assert.equal(savedTokens.scope, `${SEND_SCOPE} ${READ_SCOPE}`);
+        assert.equal(savedTokens.scope, READ_SCOPE);
         assert.deepEqual(await service.gmailStatus(), {
             configured: true,
             connected: true,
@@ -217,7 +205,7 @@ test("Gmail search returns matching messages using metadata only", async () => {
         tokens: {
             access_token: "demo-access-token",
             refresh_token: "demo-refresh-token",
-            scope: `${SEND_SCOPE} ${READ_SCOPE}`
+            scope: READ_SCOPE
         },
         listData: {
             messages: [{ id: "message-1" }, { id: "message-2" }]
@@ -332,7 +320,7 @@ test("Gmail search requires readonly scope and sanitizes API errors", async t =>
         await withGmailService({
             tokens: {
                 access_token: "send-only-token",
-                scope: SEND_SCOPE
+                scope: LEGACY_SEND_SCOPE
             }
         }, async service => {
             await assert.rejects(
@@ -421,65 +409,28 @@ test("search_gmail is registered with a bounded read-only declaration", () => {
     assert.equal(tool.validateArgs({ arbitraryMethod: "delete" }), false);
 });
 
-test("Gmail email sending remains available", async () => {
-    await withGmailService({
-        tokens: {
-            access_token: "demo-access-token",
-            scope: SEND_SCOPE
-        }
-    }, async (service, api) => {
-        const result = await service.sendEmailViaGmail({
-            to: "applicant@example.com",
-            subject: "Assignment update",
-            body: "Please review the updated email output."
-        });
-
-        assert.equal(result.success, true);
-        assert.equal(result.messageId, "gmail-message-123");
-        assert.equal(result.threadId, "thread-456");
-        assert.equal(api.calls.send.length, 1);
-    });
-});
-
-test("send_email tool delegates to the Gmail service when configured", async () => {
-    const tokenPath = path.join(os.tmpdir(), `gmail-tool-${Date.now()}.json`);
-    const fakeGoogleApi = makeFakeGoogleApi();
-
-    const original = {
-        GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
-        GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-        GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI
-    };
-
-    process.env.GOOGLE_CLIENT_ID = "tool-client-id";
-    process.env.GOOGLE_CLIENT_SECRET = "tool-client-secret";
-    process.env.GOOGLE_REDIRECT_URI = "http://localhost:3000/api/gmail/callback";
-
-    const previousGoogleApi = gmailService.setGoogleApi(fakeGoogleApi);
-    const previousTokenPath = gmailService.setTokenFilePath(tokenPath);
-
-    try {
-        await gmailService.saveStoredTokens({
-            access_token: "tool-token",
-            scope: SEND_SCOPE
-        });
-        const tool = validateToolName("send_email");
-        assert.ok(tool, "send_email tool should exist");
-
-        const result = await tool.handler({
+test("send_email is explicit and unavailable while Gmail search remains registered", async () => {
+    const tool = validateToolName("send_email");
+    const searchTool = validateToolName("search_gmail");
+    assert.ok(tool);
+    assert.ok(searchTool);
+    assert.equal(typeof gmailService.sendEmailViaGmail, "undefined");
+    assert.equal(
+        tool.validateArgs({
             to: "friend@example.com",
             subject: "Status update",
-            body: "The project is shipping successfully.",
-            confirmationToken: "approved-by-user"
-        });
+            body: "The project is shipping successfully."
+        }),
+        true
+    );
 
-        assert.equal(result.success, true);
-        assert.match(result.message, /successfully/i);
-        assert.equal(result.email.to, "friend@example.com");
-    } finally {
-        gmailService.setGoogleApi(previousGoogleApi);
-        gmailService.setTokenFilePath(previousTokenPath);
-        restoreEnvSnapshot(original);
-        await fs.rm(tokenPath, { force: true });
-    }
+    const result = await tool.handler({
+        to: "friend@example.com",
+        subject: "Status update",
+        body: "The project is shipping successfully."
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.sent, false);
+    assert.match(result.message, /disabled.*secure approval/i);
 });

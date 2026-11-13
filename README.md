@@ -13,7 +13,7 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Validated email draft preparation with an explicit handoff to an installed email app.
 - Read-only public webpage retrieval (single page or batches of up to three) and optional same-origin linked-page reading when requested by the user.
 - Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
-- JSON-backed one-time and recurring reminders, plus scheduled one-time or recurring public-webpage summaries, with in-app delivery and best-effort Android background notifications.
+- JSON-backed one-time and recurring reminders, plus scheduled one-time or recurring public-webpage summaries, with in-chat delivery and best-effort Android background notifications.
 - In-chat agent request timing and process-memory diagnostics, plus scheduled reminder delay measurements.
 - Backend request validation, CORS, Helmet headers, request-size limits, rate limiting, and secret-safe provider diagnostics.
 
@@ -47,11 +47,11 @@ npm start
 
 Set `GEMINI_API_KEY` in `backend\.env` before using AI routes. For Gmail features, also add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` with a redirect of `http://localhost:3000/api/gmail/callback`. The sample file contains placeholders only. Do not commit `.env`. `PORT` defaults to `3000`; `ALLOWED_ORIGIN` defaults to `http://localhost:3000`.
 
-After setting Google OAuth credentials, open `http://localhost:3000/api/gmail/auth` to obtain the consent URL and complete the Gmail connection. The consent request includes `gmail.send` and `gmail.readonly`. Reopen that URL and authorize again to replace an older send-only grant with the inbox-search permission. `/api/gmail/status` reports `configured`, `connected`, and `searchAvailable`; it never returns tokens. OAuth tokens are stored in `backend/data/gmail-tokens.json`, which is ignored by Git.
+After setting Google OAuth credentials, open `http://localhost:3000/api/gmail/auth` to obtain the consent URL and complete the Gmail connection. The consent request asks only for `gmail.readonly`. Reopen that URL and authorize again if `/api/gmail/status` reports `searchAvailable: false`; it never returns tokens. OAuth tokens are stored in `backend/data/gmail-tokens.json`, which is ignored by Git.
 
 To try inbox search after reconnecting, ask the agent something like `Search my Gmail for unread messages from sender@example.com`. Search results include sender, subject, date, and Gmail's short snippet; full message bodies are not fetched. Search is read-only and limited to 20 results.
 
-The Gmail integration is covered with mocked Google API tests. A successful live inbox search and live email send have not been verified. The backend has no authentication, so do not expose this development server to the public internet.
+The user manually verified that Gmail OAuth connected, `/api/gmail/status` reported the connection, and a live inbox search returned results. Automated Gmail API tests use mocks; they do not contact Gmail. Agent-side email sending is deliberately disabled: secure server-side approval bound to the exact message is not implemented, and `/api/actions/approve` returns HTTP 501 without sending. The backend has no authentication, so do not expose this development server to the public internet.
 
 Check backend health from another PowerShell window:
 
@@ -69,10 +69,19 @@ The health endpoint remains available without an API key but reports a degraded 
 4. Run the `app` configuration from Android Studio, or build from PowerShell:
 
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug
+.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin connectedDebugAndroidTest
 ```
 
 The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`. The Android client uses the emulator host alias `10.0.2.2` and local HTTP; this setup is for development, not production deployment.
+
+For a DEBUG-only reminder diagnostic, start the backend and use the debug APK on the emulator:
+
+```powershell
+adb shell am broadcast -n com.prince.personalaiagent/.DebugReminderWorkerTriggerReceiver -a com.prince.personalaiagent.DEBUG_TRIGGER_REMINDER_WORKER
+adb logcat -s ReminderDelivery
+```
+
+This enqueues the existing network-constrained WorkManager worker immediately; it still retrieves real pending reminders and applies the production notification permission/channel checks. It does not create a test notification. The trigger is absent from release builds. The trigger was verified to start the worker and contact the backend, but the worker found zero pending reminders, so system notification posting has not been verified.
 
 ### Configure the Android backend URL
 
@@ -129,7 +138,7 @@ Returns OAuth configuration and connection indicators (`configured`, `connected`
 
 ### `GET /api/gmail/auth`
 
-Returns a Google OAuth consent URL requesting the Gmail send and readonly scopes. Open the returned URL to connect or reauthorize. Redirect URI must match `GOOGLE_REDIRECT_URI`.
+Returns a Google OAuth consent URL requesting Gmail readonly access only. Open the returned URL to connect or reauthorize. Redirect URI must match `GOOGLE_REDIRECT_URI`.
 
 ### `GET /api/reminders`
 
@@ -137,7 +146,7 @@ Returns due in-app reminders or scheduled webpage summaries that have not yet be
 
 ### `POST /api/reminders/:taskId/ack`
 
-Acknowledges a reminder after the Android app displays it or posts its system notification. The app polls every 30 seconds while its chat screen is open. WorkManager also checks at startup and periodically (Android's 15-minute minimum), subject to network availability and notification permission.
+Acknowledges a reminder after the Android app posts its system notification. If notification permission or the channel is unavailable, the app uses the persisted in-chat reminder as a fallback. The chat polls every 30 seconds; WorkManager checks at startup and periodically (Android's 15-minute minimum), subject to network availability and Android scheduling. Background notification delivery is best-effort, not exact-time.
 
 ## Tests
 
@@ -145,11 +154,23 @@ From the repository root in PowerShell:
 
 ```powershell
 npm --prefix backend test
-.\gradlew.bat testDebugUnitTest
+.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin connectedDebugAndroidTest
 npm --prefix backend run benchmark
 ```
 
-The backend tests use mock Gemini responses for agent execution and isolated temporary storage for scheduler persistence. They do not consume Gemini quota or modify `backend\data\scheduled-tasks.json`. Android unit tests cover memory ranking, browser URL validation, and speech-error mapping; WebView interaction, microphone recognition, emulator behavior, and live Gemini calls need device or service validation.
+Latest verification: backend tests **71 passed, 0 failed**; Android unit tests **15 passed**; emulator instrumentation tests **13 passed**; the debug APK built and installed successfully. Agent/Gmail automated tests use mocked provider APIs and isolated temporary storage; they do not consume Gemini quota or make Gmail API calls. Instrumentation tests are automated checks, not a full interactive app test.
+
+### Manual verification (user-confirmed)
+
+- The app was installed and launched on the emulator, and AI responses worked.
+- Live Gemini chat was confirmed, with occasional model overload or incomplete final responses.
+- Chat history remained after closing and reopening the app.
+- A local memory was saved, appeared in the app, and remained after reopening.
+- Live speech-to-text succeeded on the emulator; recognized text appeared in chat.
+- Gmail OAuth connected, `/api/gmail/status` confirmed the connection, and a live read-only inbox search returned results. Search displays sender, subject, date, and snippet only.
+- Reminder scheduling and in-chat delivery were confirmed. The DEBUG WorkManager trigger started the worker and contacted the backend, but the worker found zero pending reminders, so no Android system notification was verified.
+
+These user-confirmed manual checks are separate from automated tests. Full interactive Android testing and live system-notification posting remain unverified.
 
 The benchmark runs 20 mock agent requests and scheduled webpage workflows by default. It reports mean, p50, and p95 latency plus backend RSS and heap deltas. It makes no network requests and does not measure live Gemini or Android performance; these figures are a reproducible local baseline, not production latency.
 
@@ -165,14 +186,15 @@ Screenshots are not included yet.
 ## Known limitations
 
 - Scheduled tasks support one-time and recurring reminders, plus read-only public-webpage summaries for an explicitly user-provided URL. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. Scheduled workflows do not check email or execute arbitrary actions.
-- Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
-- Gmail OAuth asks for the send and readonly scopes. Agent inbox search is read-only and returns only message metadata and snippets. Reauthorize through `/api/gmail/auth` after adding the readonly scope; check `/api/gmail/status` for `searchAvailable`. The Gmail API implementation has mock tests, but live inbox search and live email sending have not been verified.
-- The Gmail send API handler exists but has not been verified against a real account. Do not rely on agent-side sending for real messages until its user-approval enforcement is hardened and a controlled live test has passed.
+- Voice input uses the device speech-recognition service and requires microphone permission. Live speech-to-text was confirmed on the emulator; behavior still depends on the installed recognition service, network, locale, and device configuration.
+- Gmail OAuth asks for the readonly scope only and does not request previously granted scopes. Agent inbox search is read-only and returns only message metadata and snippets. Live inbox search was manually verified by the user; automated Google API tests remain mocked. Reauthorize through `/api/gmail/auth` if `/api/gmail/status` shows `searchAvailable: false`. If you previously granted Gmail send access, revoke the existing app grant in your Google Account security settings to remove that old consent.
+- Agent-side Gmail sending is disabled, including the Gmail API send function and OAuth send scope. The agent can prepare a draft for review, but cannot send it. The approval endpoint rejects send requests because no server-verified, exact-action approval flow exists.
 - Gmail search is limited to messages in the Inbox label, up to 20 results, and does not fetch message bodies. Gmail API authorization and quota errors are reported without returning raw provider details.
-- Backend OAuth tokens are stored locally in `backend/data/gmail-tokens.json`. This file and `.env` are ignored by Git, but local token-file encryption and production credential management are not implemented.
-- The in-app browser supports user-controlled navigation and text extraction, but the agent cannot click page controls, submit forms, authenticate, or automate websites.
-- The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
+- Backend OAuth tokens are stored locally in `backend/data/gmail-tokens.json`. This file and `.env` are ignored by Git, but encrypted token storage and production credential management are not implemented.
+- The in-app browser supports user-controlled navigation and text extraction, but form submission and agent-driven browser actions (including clicking controls or authenticating) are unsupported.
+- Emulator checks confirmed app launch, AI responses, chat-history persistence, memory persistence, live speech-to-text, Gmail search, and reminder scheduling/in-chat delivery. The worker contacted the backend but found no pending reminder, so system notification posting and physical-device behavior remain unverified.
 - Debug builds permit cleartext HTTP for local development. Release builds require an HTTPS backend URL and disable cleartext traffic, but production still needs a deployed backend and backend authentication.
 - Up to ten lexically relevant local memories are included in agent requests (500 characters each); if none match, the newest memories are used. Backend logs do not include their contents.
 - Gemini model availability and quota are controlled by the configured API account.
+- Live Gemini chat can occasionally encounter model overload or return an incomplete final response.
 - When a tool fails and the model retries the same tool in the next round with corrected arguments, the agent can treat the retry as resolving the earlier failure. If multiple same-tool failures are outstanding, an unrelated later success does not clear them. Tool outcome correlation remains a heuristic because the provider does not supply a stable retry identifier.

@@ -32,6 +32,20 @@ class MemoryRepository(
         return memoryDao.searchMemories(keyword.trim())
     }
 
+    suspend fun updateMemory(memory: MemoryEntity): Int {
+        val cleanedContent = memory.content.trim()
+        require(cleanedContent.isNotBlank()) {
+            "Memory cannot be empty."
+        }
+
+        return memoryDao.updateMemory(
+            memory.copy(
+                content = cleanedContent,
+                category = memory.category.trim().ifBlank { "general" }
+            )
+        )
+    }
+
     suspend fun deleteMemory(memory: MemoryEntity) {
         memoryDao.deleteMemory(memory)
     }

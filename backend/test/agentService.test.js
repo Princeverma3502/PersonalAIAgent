@@ -788,38 +788,42 @@ test("agent tool and provider error handling", async t => {
     });
 
     await t.test("blocks email sending during a Gmail inbox search request", async () => {
-        const previousSendEmail = gmailService.sendEmailViaGmail;
-        let sendAttempts = 0;
-        gmailService.sendEmailViaGmail = async () => {
-            sendAttempts += 1;
-            throw new Error("Email send should have been blocked.");
-        };
+        const ai = createMockAi([
+            functionCallResponse([{
+                name: "send_email",
+                args: {
+                    to: "recipient@example.com",
+                    subject: "Hello",
+                    body: "Message body"
+                }
+            }]),
+            { text: "I sent an email." }
+        ]);
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Search my Gmail for unread messages"
+        );
 
-        try {
-            const ai = createMockAi([
-                functionCallResponse([{
-                    name: "send_email",
-                    args: {
-                        to: "recipient@example.com",
-                        subject: "Hello",
-                        body: "Message body",
-                        confirmationToken: "test-token"
-                    }
-                }]),
-                { text: "I sent an email." }
-            ]);
-            const result = await runAgent(
-                ai,
-                ["test-model"],
-                "Search my Gmail for unread messages"
-            );
+        assert.equal(result.success, false);
+        assert.match(result.reply, /not allowed as part of a read-only/i);
+    });
 
-            assert.equal(sendAttempts, 0);
-            assert.equal(result.success, false);
-            assert.match(result.reply, /not allowed as part of a read-only/i);
-        } finally {
-            gmailService.sendEmailViaGmail = previousSendEmail;
-        }
+    await t.test("instructs Gemini not to claim persistent memory was written", async () => {
+        const requests = [];
+        const ai = createMockAi([
+            { text: "I do not have a persistent memory-writing tool." }
+        ], request => requests.push(request));
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Remember that I prefer tea."
+        );
+
+        const prompt = requests[0].contents[0].parts[0].text;
+        assert.match(prompt, /no tool to write to the Android memory database/i);
+        assert.match(prompt, /Never claim that a memory was saved/i);
+        assert.equal(result.toolCalls.length, 0);
     });
 
 });

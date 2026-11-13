@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Debug
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +32,8 @@ import androidx.core.content.ContextCompat
 import com.prince.personalaiagent.data.local.MemoryDatabase
 import com.prince.personalaiagent.data.local.MemoryRelevanceRanker
 import com.prince.personalaiagent.data.local.MemoryRepository
+import com.prince.personalaiagent.data.local.MemorySaveCommandHandler
+import com.prince.personalaiagent.data.local.MemorySaveCommandResult
 import com.prince.personalaiagent.data.local.ConversationMessageEntity
 import com.prince.personalaiagent.data.local.ConversationRepository
 import com.prince.personalaiagent.data.remote.AgentApiException
@@ -93,9 +96,14 @@ class MainActivity : ComponentActivity() {
 fun AgentScreen() {
 
     val context = LocalContext.current
+    var notificationPermissionDenied by remember {
+        mutableStateOf(false)
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) {}
+    ) { granted ->
+        notificationPermissionDenied = !granted
+    }
 
     val memoryRepository = remember {
         MemoryRepository(
@@ -147,7 +155,6 @@ fun AgentScreen() {
     var conversationHistoryError by remember {
         mutableStateOf<String?>(null)
     }
-
     val messages = remember {
         mutableStateListOf<ChatMessage>()
     }
@@ -218,7 +225,13 @@ fun AgentScreen() {
                 }
 
                 reminders.forEach { reminder ->
-                    if (reminder.taskId !in displayedReminderIds) {
+                    if (
+                        reminder.taskId !in displayedReminderIds &&
+                        !ReminderDeliveryStore.wasDisplayedInApp(
+                            context,
+                            reminder.taskId
+                        )
+                    ) {
                         val reminderMessage = ChatMessage(
                             id = nextChatMessageId(messages),
                             text = "**Reminder: ${reminder.title}**\n\n${reminder.message}",
@@ -236,6 +249,10 @@ fun AgentScreen() {
                                     reminderMessage.text,
                                     reminderMessage.isUser
                                 )
+                                ReminderDeliveryStore.markDisplayedInApp(
+                                    context,
+                                    reminder.taskId
+                                )
                             }
                             displayedReminderIds.add(reminder.taskId)
                         } catch (error: Exception) {
@@ -247,10 +264,18 @@ fun AgentScreen() {
                     }
 
                     withContext(Dispatchers.IO) {
-                        apiClient.acknowledgeReminder(reminder.taskId)
+                        if (!areReminderNotificationsEnabled(context)) {
+                            // The saved chat entry is the fallback when notifications cannot be posted.
+                            apiClient.acknowledgeReminder(reminder.taskId)
+                        }
                     }
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.w(
+                    "ReminderPolling",
+                    "Could not check or acknowledge scheduled reminders; polling will retry.",
+                    error
+                )
                 reminderServiceUnavailable = true
             }
 
@@ -335,43 +360,10 @@ fun AgentScreen() {
                 try {
 
                     val command = userMessage.lowercase().trim()
-
-                    // MEMORY-SAVING PHRASES
-                    val memoryPrefixes = listOf(
-                        "remember that ",
-                        "remember this: ",
-                        "remember this ",
-                        "remember my ",
-                        "remember i am ",
-                        "remember i'm ",
-                        "remember ",
-                        "memorize that ",
-                        "memorise that ",
-                        "memorize this: ",
-                        "memorise this: ",
-                        "memorize this ",
-                        "memorise this ",
-                        "memorize it: ",
-                        "memorise it: ",
-                        "memorize it ",
-                        "memorise it ",
-                        "memorize ",
-                        "memorise ",
-                        "save this information: ",
-                        "save this information ",
-                        "save this: ",
-                        "save this ",
-                        "save that ",
-                        "keep in mind that ",
-                        "keep in mind ",
-                        "don't forget that ",
-                        "dont forget that ",
-                        "do not forget that "
+                    val memorySaveResult = MemorySaveCommandHandler.handle(
+                        userMessage,
+                        memoryRepository
                     )
-
-                    val matchedMemoryPrefix = memoryPrefixes.firstOrNull {
-                        command.startsWith(it)
-                    }
 
                     when {
 
@@ -421,33 +413,34 @@ fun AgentScreen() {
                             )
                         }
 
-                        // SAVE MEMORY
-                        matchedMemoryPrefix != null -> {
+                        memorySaveResult is MemorySaveCommandResult.Saved ->
+                            AgentResponse(
+                                reply = "I've saved this in your memories:\n\n" +
+                                    "**${memorySaveResult.content}**",
+                                status = "success",
+                                toolName = "save_memory"
+                            )
 
-                            val memoryContent = userMessage
-                                .drop(matchedMemoryPrefix.length)
-                                .trim()
-                                .trimEnd('.', '!', '?', ',')
+                        memorySaveResult === MemorySaveCommandResult.MissingContent ->
+                            AgentResponse(
+                                reply = "Please tell me what you want me to remember.",
+                                status = "failed",
+                                toolName = "save_memory"
+                            )
 
-                            if (memoryContent.isBlank()) {
+                        memorySaveResult is MemorySaveCommandResult.UnsupportedIntent ->
+                            AgentResponse(
+                                reply = memorySaveResult.message,
+                                status = "failed",
+                                toolName = "save_memory"
+                            )
 
-                                AgentResponse(
-                                    reply = "Please tell me what you want me to remember. For example: Remember that my favourite language is Java.",
-                                    status = "success",
-                                    toolName = "save_memory"
-                                )
-
-                            } else {
-
-                                memoryRepository.saveMemory(memoryContent)
-
-                                AgentResponse(
-                                    reply = "I've saved this in your memories:\n\n**$memoryContent**",
-                                    status = "success",
-                                    toolName = "save_memory"
-                                )
-                            }
-                        }
+                        memorySaveResult is MemorySaveCommandResult.Failed ->
+                            AgentResponse(
+                                reply = memorySaveResult.message,
+                                status = "failed",
+                                toolName = "save_memory"
+                            )
 
                         // REQUEST TO DELETE ALL MEMORIES
                         command == "forget all memories" ||
@@ -803,8 +796,15 @@ fun AgentScreen() {
 
                 if (reminderServiceUnavailable) {
                     Text(
-                        text = "Could not check scheduled reminders. Will retry while chat is open.",
+                        text = "Could not check scheduled reminders. Will retry.",
                         color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                if (notificationPermissionDenied) {
+                    Text(
+                        text = "Notifications are disabled. Reminders can still appear in chat while it is open.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall
                     )
                 }

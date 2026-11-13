@@ -28,6 +28,16 @@ fun MemoryScreen(
         mutableStateOf<MemoryEntity?>(null)
     }
 
+    var editingMemory by remember {
+        mutableStateOf<MemoryEntity?>(null)
+    }
+    var editedContent by remember {
+        mutableStateOf("")
+    }
+    var editError by remember {
+        mutableStateOf<String?>(null)
+    }
+
     var showDeleteAllDialog by remember {
         mutableStateOf(false)
     }
@@ -103,12 +113,23 @@ fun MemoryScreen(
                                     style = MaterialTheme.typography.bodyLarge
                                 )
 
-                                TextButton(
-                                    onClick = {
-                                        selectedMemory = memory
+                                Column {
+                                    TextButton(
+                                        onClick = {
+                                            editingMemory = memory
+                                            editedContent = memory.content
+                                            editError = null
+                                        }
+                                    ) {
+                                        Text("Edit")
                                     }
-                                ) {
-                                    Text("Delete")
+                                    TextButton(
+                                        onClick = {
+                                            selectedMemory = memory
+                                        }
+                                    ) {
+                                        Text("Delete")
+                                    }
                                 }
                             }
                         }
@@ -116,6 +137,66 @@ fun MemoryScreen(
                 }
             }
         }
+    }
+
+    editingMemory?.let { memory ->
+        AlertDialog(
+            onDismissRequest = {
+                editingMemory = null
+            },
+            title = {
+                Text("Edit memory")
+            },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = editedContent,
+                        onValueChange = { editedContent = it },
+                        label = { Text("Memory") },
+                        isError = editedContent.isBlank()
+                    )
+                    editError?.let { message ->
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = editedContent.isNotBlank(),
+                    onClick = {
+                        coroutineScope.launch {
+                            try {
+                                val updatedRows = memoryRepository.updateMemory(
+                                    memory.copy(content = editedContent)
+                                )
+                                if (updatedRows == 0) {
+                                    editError = "This memory no longer exists."
+                                } else {
+                                    editingMemory = null
+                                }
+                            } catch (error: Exception) {
+                                editError =
+                                    "Could not update this memory: ${error.message ?: "storage error"}"
+                            }
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        editingMemory = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // Confirm deletion of one memory

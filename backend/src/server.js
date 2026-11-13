@@ -15,6 +15,9 @@ const {
     safeProviderError
 } = require("./agent/geminiError");
 const {
+    getActionApprovalResponse
+} = require("./agent/actionApproval");
+const {
     initializeScheduler,
     setWebpageSummaryExecutor,
     getPendingReminders,
@@ -320,76 +323,9 @@ app.get("/api/gmail/callback", async (req, res) => {
     }
 });
 
-app.post("/api/actions/approve", async (req, res) => {
-    const { type, payload } = req.body || {};
-
-    if (typeof type !== "string" || !type.trim()) {
-        return res.status(400).json({
-            success: false,
-            message: "Action type is required."
-        });
-    }
-
-    const actionType = type.trim();
-    const supportedTypes = new Set([
-        "send_email",
-        "form_submit",
-        "browser_action"
-    ]);
-
-    if (!supportedTypes.has(actionType)) {
-        return res.status(400).json({
-            success: false,
-            message: "Unsupported sensitive action type."
-        });
-    }
-
-    if (actionType === "send_email") {
-        const { to, subject, body, confirmationToken } = payload || {};
-
-        if (typeof confirmationToken !== "string" || !confirmationToken.trim()) {
-            return res.status(400).json({
-                success: false,
-                message: "An explicit user confirmation token is required before sending email."
-            });
-        }
-
-        try {
-            const result = await gmailService.sendEmailViaGmail({
-                to,
-                subject,
-                body
-            });
-
-            return res.json({
-                success: true,
-                message: result.message,
-                messageId: result.messageId,
-                threadId: result.threadId
-            });
-        } catch (error) {
-            const statusCode = /not configured|not connected|Gmail OAuth|approval/i.test(error.message)
-                ? 501
-                : 400;
-
-            return res.status(statusCode).json({
-                success: false,
-                message: error.message
-            });
-        }
-    }
-
-    if (actionType === "form_submit") {
-        return res.status(501).json({
-            success: false,
-            message: "Form submission approval was received, but browser automation is not configured yet."
-        });
-    }
-
-    return res.status(501).json({
-        success: false,
-        message: "Browser action approval was received, but browser automation is not configured yet."
-    });
+app.post("/api/actions/approve", (req, res) => {
+    const result = getActionApprovalResponse(req.body);
+    return res.status(result.statusCode).json(result.body);
 });
 
 app.use((error, req, res, next) => {

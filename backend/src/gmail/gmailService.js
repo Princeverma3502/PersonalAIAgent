@@ -3,7 +3,6 @@ const path = require("path");
 const { google } = require("googleapis");
 
 const DEFAULT_TOKEN_PATH = path.join(__dirname, "../../data/gmail-tokens.json");
-const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const MAX_SEARCH_RESULTS = 20;
 
@@ -96,8 +95,8 @@ function createGmailService(options = {}) {
         return oauth2Client.generateAuthUrl({
             access_type: "offline",
             prompt: "consent",
-            include_granted_scopes: true,
-            scope: [GMAIL_SEND_SCOPE, GMAIL_READONLY_SCOPE]
+            include_granted_scopes: false,
+            scope: [GMAIL_READONLY_SCOPE]
         });
     }
 
@@ -136,48 +135,6 @@ function createGmailService(options = {}) {
             connected,
             searchAvailable: connected &&
                 hasScope(storedTokens, GMAIL_READONLY_SCOPE)
-        };
-    }
-
-    async function sendEmailViaGmail({ to, subject, body }) {
-        const oauth2Client = await getAuthenticatedClient();
-        if (!oauth2Client) {
-            throw new Error(
-                "Gmail OAuth approval was received, but the backend is not configured yet. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI before sending email."
-            );
-        }
-
-        const storedTokens = await readStoredTokens();
-        if (!storedTokens) {
-            throw new Error(
-                "Gmail OAuth approval was received, but the account is not connected yet. Sign in through /api/gmail/auth first."
-            );
-        }
-
-        oauth2Client.setCredentials(storedTokens);
-
-        const gmail = googleApi.gmail({ version: "v1", auth: oauth2Client });
-        const email = [
-            `From: me`,
-            `To: ${String(to).trim()}`,
-            `Subject: ${String(subject).trim()}`,
-            "",
-            String(body).trim()
-        ].join("\r\n");
-
-        const encoded = Buffer.from(email).toString("base64url");
-        const response = await gmail.users.messages.send({
-            userId: "me",
-            requestBody: {
-                raw: encoded
-            }
-        });
-
-        return {
-            success: true,
-            message: "Email sent successfully via Gmail.",
-            messageId: response.data.id,
-            threadId: response.data.threadId || null
         };
     }
 
@@ -280,7 +237,6 @@ function createGmailService(options = {}) {
         buildAuthorizationUrl,
         exchangeCodeForTokens,
         gmailStatus,
-        sendEmailViaGmail,
         searchEmails,
         setGoogleApi(nextGoogleApi) {
             googleApi = nextGoogleApi || google;

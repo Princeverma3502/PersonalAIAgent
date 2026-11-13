@@ -533,6 +533,9 @@ For Gmail inbox requests:
 - Use search_gmail to search or summarize messages in the connected inbox.
 - Gmail search is read-only. Never send, delete, archive, or modify a message as part of a search.
 - Do not claim that Gmail was searched unless search_gmail completed successfully.
+For persistent memory requests:
+- Saved memories are supplied as context, but this backend has no tool to write to the Android memory database.
+- Never claim that a memory was saved, changed, or deleted. Only the Android client can confirm a persistent memory operation.
 
 When a tool fails:
 - Read the error returned by the tool.

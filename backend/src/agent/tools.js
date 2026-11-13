@@ -331,7 +331,7 @@ const TOOL_REGISTRY = Object.freeze({
 
     send_email: {
         name: "send_email",
-        description: "Sends an email only after explicit user approval. When configured, it uses the connected Gmail account.",
+        description: "Email sending is currently disabled because the backend cannot securely bind user approval to the exact message. Use draft_email to prepare a message for user review.",
         parametersJsonSchema: {
             type: "object",
             properties: {
@@ -346,17 +346,13 @@ const TOOL_REGISTRY = Object.freeze({
                 body: {
                     type: "string",
                     description: "Email body."
-                },
-                confirmationToken: {
-                    type: "string",
-                    description: "Approval token provided by the Android app after explicit user confirmation."
                 }
             },
-            required: ["to", "subject", "body", "confirmationToken"],
+            required: ["to", "subject", "body"],
             additionalProperties: false
         },
         validateArgs: args =>
-            Object.keys(args).length === 4 &&
+            Object.keys(args).length === 3 &&
             typeof args.to === "string" &&
             /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(args.to.trim()) &&
             typeof args.subject === "string" &&
@@ -364,43 +360,12 @@ const TOOL_REGISTRY = Object.freeze({
             args.subject.trim().length <= 200 &&
             typeof args.body === "string" &&
             args.body.trim().length > 0 &&
-            args.body.length <= 10000 &&
-            typeof args.confirmationToken === "string" &&
-            args.confirmationToken.trim().length > 0,
-        handler: async args => {
-            try {
-                const result = await gmailService.sendEmailViaGmail({
-                    to: args.to.trim(),
-                    subject: args.subject.trim(),
-                    body: args.body.trim()
-                });
-
-                return {
-                    success: true,
-                    message: result.message,
-                    sent: true,
-                    email: {
-                        to: args.to.trim(),
-                        subject: args.subject.trim(),
-                        body: args.body.trim(),
-                        messageId: result.messageId || null,
-                        threadId: result.threadId || null
-                    }
-                };
-            } catch (error) {
-                const fallbackMessage = "Gmail OAuth approval was received, but the backend is not configured yet. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI before sending email.";
-                return {
-                    success: false,
-                    message: error?.message && /Gmail|OAuth|approval|configured/i.test(error.message)
-                        ? error.message
-                        : fallbackMessage,
-                    sent: false,
-                    requiresConfiguration: !process.env.GOOGLE_CLIENT_ID ||
-                        !process.env.GOOGLE_CLIENT_SECRET ||
-                        !process.env.GOOGLE_REDIRECT_URI
-                };
-            }
-        }
+            args.body.length <= 10000,
+        handler: async () => ({
+            success: false,
+            sent: false,
+            message: "Email sending is disabled because secure approval is not available. I can prepare a draft for you to review, but it has not been sent."
+        })
     },
 
     search_gmail: {
@@ -447,7 +412,7 @@ const TOOL_REGISTRY = Object.freeze({
 
     perform_browser_action: {
         name: "perform_browser_action",
-        description: "Executes a browser action only after explicit user approval. This is a backend contract for future Playwright automation.",
+        description: "Browser automation is not implemented. This tool cannot click, type, submit forms, or authenticate on websites.",
         parametersJsonSchema: {
             type: "object",
             properties: {
@@ -481,7 +446,7 @@ const TOOL_REGISTRY = Object.freeze({
             (args.selector === undefined || typeof args.selector === "string"),
         handler: async () => ({
             success: false,
-            message: "Playwright approval was received, but browser automation is not configured yet. Set up a Playwright service before running page actions."
+            message: "Browser actions are unsupported because browser automation is not implemented."
         })
     },
 

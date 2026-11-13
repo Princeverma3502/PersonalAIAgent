@@ -35,6 +35,42 @@ data class AgentReminder(
     val sourceUrl: String? = null
 )
 
+internal fun requireSuccessfulSensitiveActionResponse(
+    responseCode: Int,
+    success: Boolean,
+    message: String?
+): String {
+    val safeMessage = message?.takeIf { it.isNotBlank() && it != "null" }
+    if (responseCode !in 200..299 || !success) {
+        throw IOException(
+            safeMessage ?: "Sensitive action request failed with HTTP $responseCode."
+        )
+    }
+
+    return safeMessage ?: "Action completed."
+}
+
+internal fun parseSensitiveActionResponse(
+    responseCode: Int,
+    responseText: String
+): String {
+    val json = try {
+        JSONObject(responseText)
+    } catch (_: JSONException) {
+        return requireSuccessfulSensitiveActionResponse(
+            responseCode,
+            success = false,
+            message = null
+        )
+    }
+
+    return requireSuccessfulSensitiveActionResponse(
+        responseCode = responseCode,
+        success = json.optBoolean("success", false),
+        message = json.optString("message")
+    )
+}
+
 class AgentApiException(
     val response: AgentResponse
 ) : IOException(response.reply)
@@ -117,6 +153,37 @@ class ChatApiClient {
                 }
                 throw IOException(message)
             }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun approveSensitiveAction(
+        type: String,
+        payload: Map<String, String> = emptyMap()
+    ): String {
+        val connection = URL("$API_BASE_URL/api/actions/approve")
+            .openConnection() as HttpURLConnection
+
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = CONNECT_TIMEOUT
+            connection.readTimeout = READ_TIMEOUT
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+
+            val body = JSONObject()
+                .put("type", type)
+                .put("payload", JSONObject(payload))
+                .toString()
+
+            connection.outputStream.use { output ->
+                output.write(body.toByteArray(Charsets.UTF_8))
+            }
+
+            val responseCode = connection.responseCode
+            val responseText = readResponse(connection, responseCode)
+            return parseSensitiveActionResponse(responseCode, responseText)
         } finally {
             connection.disconnect()
         }

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -20,6 +21,9 @@ interface MemoryDao {
 
     @Delete
     suspend fun deleteMemory(memory: MemoryEntity)
+
+    @Update
+    suspend fun updateMemory(memory: MemoryEntity): Int
 
     @Query("DELETE FROM memories")
     suspend fun deleteAllMemories()

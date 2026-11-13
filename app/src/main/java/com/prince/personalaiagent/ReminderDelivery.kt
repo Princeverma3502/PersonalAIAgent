@@ -24,6 +24,7 @@ import androidx.work.WorkerParameters
 import com.prince.personalaiagent.data.remote.ChatApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.LinkedHashSet
 import java.util.concurrent.TimeUnit
 
@@ -33,9 +34,66 @@ private const val REMINDER_WORK_NAME = "scheduled-reminder-delivery"
 private const val REMINDER_STARTUP_WORK_NAME = "scheduled-reminder-startup-check"
 private const val DELIVERY_PREFERENCES = "reminder_delivery"
 private const val DELIVERED_IDS_KEY = "delivered_reminder_ids"
+private const val IN_APP_DISPLAYED_IDS_KEY = "in_app_displayed_reminder_ids"
 private const val MAX_DELIVERED_IDS = 500
 
+internal fun areReminderNotificationsEnabled(context: Context): Boolean {
+    if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+        return false
+    }
+
+    if (
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        context.checkSelfPermission(
+            android.Manifest.permission.POST_NOTIFICATIONS
+        ) != PackageManager.PERMISSION_GRANTED
+    ) {
+        return false
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = context.getSystemService(NotificationManager::class.java)
+            .getNotificationChannel(REMINDER_CHANNEL_ID)
+        if (channel?.importance == NotificationManager.IMPORTANCE_NONE) {
+            return false
+        }
+    }
+
+    return true
+}
+
 object ReminderDeliveryStore {
+    @Synchronized
+    fun wasDisplayedInApp(context: Context, reminderId: String): Boolean =
+        context.getSharedPreferences(DELIVERY_PREFERENCES, Context.MODE_PRIVATE)
+            .getStringSet(IN_APP_DISPLAYED_IDS_KEY, emptySet())
+            .orEmpty()
+            .contains(reminderId)
+
+    @Synchronized
+    fun markDisplayedInApp(context: Context, reminderId: String) {
+        val preferences = context.getSharedPreferences(
+            DELIVERY_PREFERENCES,
+            Context.MODE_PRIVATE
+        )
+        val displayedIds = LinkedHashSet(
+            preferences.getStringSet(IN_APP_DISPLAYED_IDS_KEY, emptySet()).orEmpty()
+        )
+        if (!displayedIds.add(reminderId)) return
+
+        while (displayedIds.size > MAX_DELIVERED_IDS) {
+            displayedIds.remove(displayedIds.first())
+        }
+
+        if (
+            !preferences.edit()
+                .putStringSet(IN_APP_DISPLAYED_IDS_KEY, displayedIds)
+                .commit()
+        ) {
+            throw IOException("Could not persist in-app reminder display state.")
+        }
+    }
+
     @Synchronized
     fun deliverOnce(context: Context, reminderId: String, deliver: () -> Unit): Boolean {
         val preferences = context.getSharedPreferences(
@@ -52,9 +110,12 @@ object ReminderDeliveryStore {
             deliveredIds.remove(deliveredIds.first())
         }
 
-        preferences.edit()
+        val persisted = preferences.edit()
             .putStringSet(DELIVERED_IDS_KEY, deliveredIds)
-            .apply()
+            .commit()
+        if (!persisted) {
+            throw IOException("Could not persist reminder delivery state.")
+        }
         return true
     }
 }
@@ -105,41 +166,52 @@ class ReminderDeliveryWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Reminder worker started; attempt=$runAttemptCount.")
         try {
             createNotificationChannel(applicationContext)
             val apiClient = ChatApiClient()
+            Log.i(TAG, "Retrieving pending reminders from the backend.")
             val reminders = apiClient.getPendingReminders()
+            Log.i(TAG, "Backend returned ${reminders.size} pending reminder(s).")
             val notifications = NotificationManagerCompat.from(applicationContext)
 
             for (reminder in reminders) {
-                if (
-                    !notifications.areNotificationsEnabled() ||
-                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        applicationContext.checkSelfPermission(
-                            android.Manifest.permission.POST_NOTIFICATIONS
-                        ) != PackageManager.PERMISSION_GRANTED)
-                ) {
-                    Log.i(TAG, "Notification permission is unavailable; reminder remains pending.")
+                if (!areReminderNotificationsEnabled(applicationContext)) {
+                    Log.i(
+                        TAG,
+                        "Notifications are unavailable; reminder ${reminder.taskId} remains pending."
+                    )
                     return@withContext Result.success()
                 }
 
-                ReminderDeliveryStore.deliverOnce(
+                val posted = ReminderDeliveryStore.deliverOnce(
                     applicationContext,
                     reminder.taskId
                 ) {
-                        notifications.notify(
-                            reminder.taskId,
-                            0,
-                            buildNotification(
-                                applicationContext,
-                                reminder.title,
-                                reminder.message,
-                                reminder.taskId
-                            )
+                    Log.i(TAG, "Posting notification for reminder ${reminder.taskId}.")
+                    notifications.notify(
+                        reminder.taskId,
+                        0,
+                        buildNotification(
+                            applicationContext,
+                            reminder.title,
+                            reminder.message,
+                            reminder.taskId
                         )
+                    )
                 }
+                Log.i(
+                    TAG,
+                    if (posted) {
+                        "Notification posting succeeded for reminder ${reminder.taskId}."
+                    } else {
+                        "Notification was already posted for reminder ${reminder.taskId}."
+                    }
+                )
 
+                Log.i(TAG, "Acknowledging reminder ${reminder.taskId} on the backend.")
                 apiClient.acknowledgeReminder(reminder.taskId)
+                Log.i(TAG, "Backend acknowledgement succeeded for reminder ${reminder.taskId}.")
             }
 
             Result.success()
