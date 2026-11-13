@@ -46,6 +46,16 @@ function userExplicitlyRequestsLinkNavigation(userMessage) {
     return asksToNavigate && !explicitlyDeclines;
 }
 
+function isGmailInboxReadRequest(userMessage) {
+    const mentionsMailbox =
+        /\b(?:gmail|inbox|e-?mails?|mail|mailbox|messages?)\b/i.test(userMessage);
+    const asksToRead =
+        /\b(?:search|find|look(?:\s+for)?|check|show|list|read|summari[sz]e|count|received|arrived|unread|latest|recent)\b/i
+            .test(userMessage);
+
+    return mentionsMailbox && asksToRead;
+}
+
 async function executeRegisteredTool(functionCall, userMessage) {
     if (!functionCall || typeof functionCall.name !== "string") {
         return {
@@ -76,6 +86,17 @@ async function executeRegisteredTool(functionCall, userMessage) {
             name: functionCall.name,
             status: "failed",
             error: `Invalid arguments for tool ${functionCall.name}.`
+        };
+    }
+
+    if (
+        functionCall.name === "send_email" &&
+        isGmailInboxReadRequest(userMessage)
+    ) {
+        return {
+            name: functionCall.name,
+            status: "failed",
+            error: "Email sending is not allowed as part of a read-only Gmail inbox search."
         };
     }
 
@@ -508,6 +529,10 @@ For scheduled webpage summary requests:
 - Use create_scheduled_webpage_summary for a one-time request and create_recurring_webpage_summary for a recurring request.
 - Use only the exact public URL included by the user. These workflows read one public page and prepare a summary; they do not check email or perform other actions.
 - For recurring requests, use the user's IANA timezone and clarify ambiguous schedules before creating the workflow.
+For Gmail inbox requests:
+- Use search_gmail to search or summarize messages in the connected inbox.
+- Gmail search is read-only. Never send, delete, archive, or modify a message as part of a search.
+- Do not claim that Gmail was searched unless search_gmail completed successfully.
 
 When a tool fails:
 - Read the error returned by the tool.
@@ -559,6 +584,27 @@ When all required actions are complete, give the user a concise summary.
                 const functionCalls = getFunctionCalls(response);
 
                 if (functionCalls.length === 0) {
+                    if (
+                        isGmailInboxReadRequest(trimmedMessage) &&
+                        !toolAttempts.some(attempt =>
+                            attempt.name === "search_gmail"
+                        )
+                    ) {
+                        const toolFailureReply =
+                            getToolFailureReply(toolAttempts);
+                        return {
+                            success: false,
+                            reply: toolFailureReply
+                                ? `I couldn't search Gmail because the inbox search tool was not run.\n${toolFailureReply}`
+                                : "I couldn't search Gmail because the inbox search tool was not run. Please retry the request.",
+                            status: "failed",
+                            toolCall: executedToolCalls.length > 0
+                                ? executedToolCalls[executedToolCalls.length - 1]
+                                : null,
+                            toolCalls: executedToolCalls
+                        };
+                    }
+
                     const toolFailureReply =
                         getToolFailureReply(toolAttempts);
                     const hasFailedTool = toolFailureReply !== null;

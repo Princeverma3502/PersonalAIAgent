@@ -20,6 +20,7 @@ const {
     getPendingReminders,
     acknowledgeReminder
 } = require("./scheduler/taskScheduler");
+const gmailService = require("./gmail/gmailService");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -267,6 +268,128 @@ app.post("/api/reminders/:taskId/ack", async (req, res, next) => {
     } catch (error) {
         return next(error);
     }
+});
+
+app.get("/api/gmail/status", async (req, res, next) => {
+    try {
+        const status = await gmailService.gmailStatus();
+        res.json({
+            success: true,
+            ...status
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.get("/api/gmail/auth", (req, res) => {
+    try {
+        const authUrl = gmailService.buildAuthorizationUrl();
+        return res.json({
+            success: true,
+            authUrl
+        });
+    } catch (error) {
+        return res.status(503).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.get("/api/gmail/callback", async (req, res) => {
+    try {
+        const { code } = req.query || {};
+        if (typeof code !== "string" || !code.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Google OAuth callback did not include an authorization code."
+            });
+        }
+
+        await gmailService.exchangeCodeForTokens(code);
+        return res.json({
+            success: true,
+            message: "Gmail account connected successfully."
+        });
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.post("/api/actions/approve", async (req, res) => {
+    const { type, payload } = req.body || {};
+
+    if (typeof type !== "string" || !type.trim()) {
+        return res.status(400).json({
+            success: false,
+            message: "Action type is required."
+        });
+    }
+
+    const actionType = type.trim();
+    const supportedTypes = new Set([
+        "send_email",
+        "form_submit",
+        "browser_action"
+    ]);
+
+    if (!supportedTypes.has(actionType)) {
+        return res.status(400).json({
+            success: false,
+            message: "Unsupported sensitive action type."
+        });
+    }
+
+    if (actionType === "send_email") {
+        const { to, subject, body, confirmationToken } = payload || {};
+
+        if (typeof confirmationToken !== "string" || !confirmationToken.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "An explicit user confirmation token is required before sending email."
+            });
+        }
+
+        try {
+            const result = await gmailService.sendEmailViaGmail({
+                to,
+                subject,
+                body
+            });
+
+            return res.json({
+                success: true,
+                message: result.message,
+                messageId: result.messageId,
+                threadId: result.threadId
+            });
+        } catch (error) {
+            const statusCode = /not configured|not connected|Gmail OAuth|approval/i.test(error.message)
+                ? 501
+                : 400;
+
+            return res.status(statusCode).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+
+    if (actionType === "form_submit") {
+        return res.status(501).json({
+            success: false,
+            message: "Form submission approval was received, but browser automation is not configured yet."
+        });
+    }
+
+    return res.status(501).json({
+        success: false,
+        message: "Browser action approval was received, but browser automation is not configured yet."
+    });
 });
 
 app.use((error, req, res, next) => {

@@ -12,7 +12,9 @@
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery.
-- Validated email draft preparation, with user-initiated handoff to a compatible email app; the agent never sends.
+- Validated email draft preparation with user-initiated handoff to a compatible email app. A backend Gmail send handler exists, but live sending and secure approval enforcement are not verified.
+- Read-only Gmail inbox search tool using Gmail search syntax, Inbox label filtering, metadata-only message fetches, and a 20-result cap; verified with mocked Google API tests.
+- Gmail OAuth authorization requests both `gmail.send` and `gmail.readonly`; reauthorization safely replaces token data while retaining an existing refresh token when Google omits a new one. Stored scope metadata is checked before inbox search.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search; batch reads support up to three distinct, user-provided URLs per request.
 - One-time and recurring scheduled public-webpage summaries for exact URLs supplied by the user; page retrieval and Gemini summarization run at the scheduled time and deliver results through reminders.
 - Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
@@ -30,12 +32,15 @@
 - **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** the agent can read one explicitly provided URL, batches of up to three explicitly provided URLs, and (when requested) at most two static links on the same origin as an explicitly provided seed URL. Retrieval is bounded and read-only. The in-app browser remains user-controlled. The agent cannot click controls, submit forms, or authenticate.
+- **Gmail:** read-only Inbox search is implemented and mock-tested. Search returns sender, subject, date, and Gmail snippet only; it does not fetch message bodies. The agent is prevented from sending mail as part of a Gmail search and does not report a successful search if the search tool was skipped or failed.
+- **Gmail live validation:** OAuth scope setup, Gmail API search, and email sending have not been verified against a live Google account in this validation pass.
 - **Scheduled workflow scope:** webpage summaries are supported only for explicit public URLs; email checks and other arbitrary actions are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
 ## Not implemented
 
-- Gmail/OAuth integration, agent-side email sending, and email search. Users can review and send a draft themselves in a compatible email app.
+- Gmail-backed scheduled email checks, email delete/archive actions, and live verification of inbox search.
+- Agent-side email sending has a backend handler but is not verified against a live account and must not be relied on until user-approval enforcement is hardened.
 - Agent-driven browser automation, authentication, and page actions such as clicking or submitting forms.
 - Gmail/OAuth-backed scheduled email checks or other arbitrary scheduled actions.
 - Production backend authentication and deployment.
@@ -46,7 +51,7 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Passed: 45 tests, 0 failures. Agent/browser tests use mock AI and network adapters; scheduler tests use isolated storage. |
+| `npm --prefix backend test` | Passed: 66 tests, 0 failures. Gmail search, OAuth scope handling, and agent tool flow use mocked Google/Gemini APIs; browser and scheduler tests use mocks or isolated storage. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
 | Public webpage retrieval | Tests cover URL/IP restrictions, redirect validation, text extraction, search, explicit URL and link-navigation intent checks, batches of up to three pages, same-origin linked-page reads, cross-origin redirect rejection, and no follow-up tool round. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
@@ -77,7 +82,7 @@
 - Chat history is stored locally with the existing Room database and can be cleared separately from saved memories; it is not synchronized to the backend.
 - There is no live Gemini verification because the smoke-test attempt could not connect to a running backend.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
-- Email drafts are not persisted or sent by the agent. Sending still requires a user action in an installed email app; Gmail OAuth/provider integration is not configured.
+- Email drafts are not persisted and the live Gmail send path has not been verified. Users can review/send drafts through an installed email app; do not rely on agent-side sending until explicit approval enforcement is hardened.
 - Backend webpage retrieval requires exact user-provided URLs for direct reads. Link navigation is only allowed on explicit request, only for static same-origin links, and is limited to two related pages; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.
 - Browser URL policy tests cover HTTPS normalization and blocking non-web schemes and embedded credentials. Device-level WebView behavior remains untested.
 - The local benchmark uses mocked model responses and excludes real provider/network latency; live Gemini latency and target-device PSS measurements remain to be collected.

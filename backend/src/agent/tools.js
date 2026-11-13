@@ -10,6 +10,7 @@ const {
     readLinkedPublicPages,
     validateWebUrl
 } = require("./browserService");
+const gmailService = require("../gmail/gmailService");
 
 function isValidEmailDraft(args) {
     const recipient = args.to;
@@ -79,6 +80,19 @@ function isValidWebPageBatch(args) {
     }
 
     return new Set(normalizedUrls).size === normalizedUrls.length;
+}
+
+function isValidGmailSearch(args) {
+    const keys = Object.keys(args);
+    return (
+        keys.every(key => ["query", "maxResults"].includes(key)) &&
+        (args.query === undefined ||
+            (typeof args.query === "string" && args.query.length <= 500)) &&
+        (args.maxResults === undefined ||
+            (Number.isInteger(args.maxResults) &&
+                args.maxResults >= 1 &&
+                args.maxResults <= 20))
+    );
 }
 
 const TOOL_REGISTRY = Object.freeze({
@@ -313,6 +327,162 @@ const TOOL_REGISTRY = Object.freeze({
             typeof args.taskId === "string" &&
             args.taskId.trim().length > 0,
         handler: async args => cancelTask(args.taskId)
+    },
+
+    send_email: {
+        name: "send_email",
+        description: "Sends an email only after explicit user approval. When configured, it uses the connected Gmail account.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                to: {
+                    type: "string",
+                    description: "Recipient email address."
+                },
+                subject: {
+                    type: "string",
+                    description: "Email subject line."
+                },
+                body: {
+                    type: "string",
+                    description: "Email body."
+                },
+                confirmationToken: {
+                    type: "string",
+                    description: "Approval token provided by the Android app after explicit user confirmation."
+                }
+            },
+            required: ["to", "subject", "body", "confirmationToken"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length === 4 &&
+            typeof args.to === "string" &&
+            /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(args.to.trim()) &&
+            typeof args.subject === "string" &&
+            args.subject.trim().length > 0 &&
+            args.subject.trim().length <= 200 &&
+            typeof args.body === "string" &&
+            args.body.trim().length > 0 &&
+            args.body.length <= 10000 &&
+            typeof args.confirmationToken === "string" &&
+            args.confirmationToken.trim().length > 0,
+        handler: async args => {
+            try {
+                const result = await gmailService.sendEmailViaGmail({
+                    to: args.to.trim(),
+                    subject: args.subject.trim(),
+                    body: args.body.trim()
+                });
+
+                return {
+                    success: true,
+                    message: result.message,
+                    sent: true,
+                    email: {
+                        to: args.to.trim(),
+                        subject: args.subject.trim(),
+                        body: args.body.trim(),
+                        messageId: result.messageId || null,
+                        threadId: result.threadId || null
+                    }
+                };
+            } catch (error) {
+                const fallbackMessage = "Gmail OAuth approval was received, but the backend is not configured yet. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI before sending email.";
+                return {
+                    success: false,
+                    message: error?.message && /Gmail|OAuth|approval|configured/i.test(error.message)
+                        ? error.message
+                        : fallbackMessage,
+                    sent: false,
+                    requiresConfiguration: !process.env.GOOGLE_CLIENT_ID ||
+                        !process.env.GOOGLE_CLIENT_SECRET ||
+                        !process.env.GOOGLE_REDIRECT_URI
+                };
+            }
+        }
+    },
+
+    search_gmail: {
+        name: "search_gmail",
+        description: "Searches the connected user's Gmail inbox using Gmail search syntax. This tool is strictly read-only and never sends, deletes, archives, or modifies messages.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Optional Gmail search query, such as from:person@example.com, subject:invoice, after:2026/01/01, or is:unread. Empty searches the most recent inbox messages."
+                },
+                maxResults: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 20,
+                    description: "Maximum number of recent matching messages to return; defaults to 5."
+                }
+            },
+            additionalProperties: false
+        },
+        validateArgs: isValidGmailSearch,
+        handler: async args => {
+            try {
+                return await gmailService.searchEmails({
+                    query: args.query ?? "",
+                    maxResults: args.maxResults ?? 5
+                });
+            } catch (error) {
+                const message = error?.message &&
+                    /Gmail|Google|authorize|permission|scope|configured|connected/i
+                        .test(error.message)
+                    ? error.message
+                    : "Gmail inbox search failed. Check the Gmail connection and try again.";
+                return {
+                    success: false,
+                    message,
+                    emails: [],
+                    resultCount: 0
+                };
+            }
+        }
+    },
+
+    perform_browser_action: {
+        name: "perform_browser_action",
+        description: "Executes a browser action only after explicit user approval. This is a backend contract for future Playwright automation.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                action: {
+                    type: "string",
+                    description: "The browser action to perform, such as click, type, or submit."
+                },
+                url: {
+                    type: "string",
+                    description: "The exact target URL."
+                },
+                selector: {
+                    type: "string",
+                    description: "CSS selector or element description to act on."
+                },
+                confirmationToken: {
+                    type: "string",
+                    description: "Approval token from the app after explicit confirmation."
+                }
+            },
+            required: ["action", "url", "confirmationToken"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length >= 3 &&
+            Object.keys(args).length <= 5 &&
+            typeof args.action === "string" &&
+            typeof args.url === "string" &&
+            typeof args.confirmationToken === "string" &&
+            args.confirmationToken.trim().length > 0 &&
+            (args.selector === undefined || typeof args.selector === "string"),
+        handler: async () => ({
+            success: false,
+            message: "Playwright approval was received, but browser automation is not configured yet. Set up a Playwright service before running page actions."
+        })
     },
 
     draft_email: {

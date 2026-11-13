@@ -1,6 +1,6 @@
 # Personal AI Agent
 
-A Kotlin Android chat app backed by a Node.js service that connects to Google Gemini. The agent can call backend tools for reminders, email drafts, and read-only webpage retrieval, while user memories are stored locally on the device.
+A Kotlin Android chat app backed by a Node.js service that connects to Google Gemini. The agent can call backend tools for reminders, read-only Gmail inbox search, email drafts, and read-only webpage retrieval, while user memories are stored locally on the device.
 
 ## Features
 
@@ -9,7 +9,8 @@ A Kotlin Android chat app backed by a Node.js service that connects to Google Ge
 - Local Room memory storage with save, list, search, delete, and relevance-ranked agent context.
 - Room-backed conversation history that restores after app restarts and can be cleared separately from saved memories.
 - Gemini agent tool calling with ordered model fallback and tool-execution history.
-- Validated email draft preparation with an explicit handoff to an installed email app; the agent never sends email.
+- Read-only Gmail inbox search using Gmail search syntax, returning message headers and snippets only.
+- Validated email draft preparation with an explicit handoff to an installed email app.
 - Read-only public webpage retrieval (single page or batches of up to three) and optional same-origin linked-page reading when requested by the user.
 - Controlled in-app browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
 - JSON-backed one-time and recurring reminders, plus scheduled one-time or recurring public-webpage summaries, with in-app delivery and best-effort Android background notifications.
@@ -44,7 +45,13 @@ npm install
 npm start
 ```
 
-Set `GEMINI_API_KEY` in `backend\.env` before using AI routes. The sample file contains placeholders only. Do not commit `.env`. `PORT` defaults to `3000`; `ALLOWED_ORIGIN` defaults to `http://localhost:3000`.
+Set `GEMINI_API_KEY` in `backend\.env` before using AI routes. For Gmail features, also add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` with a redirect of `http://localhost:3000/api/gmail/callback`. The sample file contains placeholders only. Do not commit `.env`. `PORT` defaults to `3000`; `ALLOWED_ORIGIN` defaults to `http://localhost:3000`.
+
+After setting Google OAuth credentials, open `http://localhost:3000/api/gmail/auth` to obtain the consent URL and complete the Gmail connection. The consent request includes `gmail.send` and `gmail.readonly`. Reopen that URL and authorize again to replace an older send-only grant with the inbox-search permission. `/api/gmail/status` reports `configured`, `connected`, and `searchAvailable`; it never returns tokens. OAuth tokens are stored in `backend/data/gmail-tokens.json`, which is ignored by Git.
+
+To try inbox search after reconnecting, ask the agent something like `Search my Gmail for unread messages from sender@example.com`. Search results include sender, subject, date, and Gmail's short snippet; full message bodies are not fetched. Search is read-only and limited to 20 results.
+
+The Gmail integration is covered with mocked Google API tests. A successful live inbox search and live email send have not been verified. The backend has no authentication, so do not expose this development server to the public internet.
 
 Check backend health from another PowerShell window:
 
@@ -112,7 +119,17 @@ Responses include `success`, `reply`, and `status`. Agent responses also include
 
 The agent can use `read_public_webpage` for one complete public HTTP(S) URL, or `read_public_webpages` for up to three distinct URLs all explicitly included in the user's message. If the user explicitly asks to follow links from a provided URL, `read_public_linked_pages` reads the source plus at most two static links on the same origin. All return bounded readable text; none click controls, submit forms, authenticate, or allow retrieved page text to trigger follow-up tool calls.
 
+For inbox requests, the agent can use `search_gmail` with Gmail search syntax such as `from:person@example.com`, `subject:invoice`, `after:2026/01/01`, `before:2026/02/01`, and `is:unread`. It searches only the Inbox label and returns at most 20 results (5 by default), with sender, subject, date, and snippet. It is read-only and does not fetch full message bodies.
+
 Recurring reminder requests use a five-field cron expression and the Android device's IANA timezone. For scheduled webpage summaries, the user must provide the exact public HTTP(S) URL; one-time and recurring summaries fetch that page when due and use Gemini to summarize its content. The workflow is read-only and does not check email, follow page instructions, or perform other actions. The backend must be running when the task is due.
+
+### `GET /api/gmail/status`
+
+Returns OAuth configuration and connection indicators (`configured`, `connected`, and `searchAvailable`) without exposing tokens. If `searchAvailable` is false, restart the backend and reauthorize at `/api/gmail/auth`, then approve Gmail read access.
+
+### `GET /api/gmail/auth`
+
+Returns a Google OAuth consent URL requesting the Gmail send and readonly scopes. Open the returned URL to connect or reauthorize. Redirect URI must match `GOOGLE_REDIRECT_URI`.
 
 ### `GET /api/reminders`
 
@@ -149,7 +166,10 @@ Screenshots are not included yet.
 
 - Scheduled tasks support one-time and recurring reminders, plus read-only public-webpage summaries for an explicitly user-provided URL. Android background delivery uses network-constrained WorkManager and system notifications; delivery is best-effort and may be delayed by Android battery policies. The backend must remain reachable, and notification permission must be granted. Scheduled workflows do not check email or execute arbitrary actions.
 - Voice input uses the device speech-recognition service and requires microphone permission; behavior depends on an installed/available recognition service and has not been verified on an emulator or physical device.
-- Email drafts can be opened in an installed email app for review; the user must explicitly send there. There is no Gmail/OAuth integration, agent-side sending, or email search.
+- Gmail OAuth asks for the send and readonly scopes. Agent inbox search is read-only and returns only message metadata and snippets. Reauthorize through `/api/gmail/auth` after adding the readonly scope; check `/api/gmail/status` for `searchAvailable`. The Gmail API implementation has mock tests, but live inbox search and live email sending have not been verified.
+- The Gmail send API handler exists but has not been verified against a real account. Do not rely on agent-side sending for real messages until its user-approval enforcement is hardened and a controlled live test has passed.
+- Gmail search is limited to messages in the Inbox label, up to 20 results, and does not fetch message bodies. Gmail API authorization and quota errors are reported without returning raw provider details.
+- Backend OAuth tokens are stored locally in `backend/data/gmail-tokens.json`. This file and `.env` are ignored by Git, but local token-file encryption and production credential management are not implemented.
 - The in-app browser supports user-controlled navigation and text extraction, but the agent cannot click page controls, submit forms, authenticate, or automate websites.
 - The Android application has not been verified interactively in an emulator or on a physical device in the current validation pass.
 - Debug builds permit cleartext HTTP for local development. Release builds require an HTTPS backend URL and disable cleartext traffic, but production still needs a deployed backend and backend authentication.

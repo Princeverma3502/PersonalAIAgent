@@ -14,6 +14,7 @@ require.cache[schedulerPath].exports = {
 
 const { runAgentTurn } = require("../src/agent/agentService");
 const { TOOL_REGISTRY } = require("../src/agent/tools");
+const gmailService = require("../src/gmail/gmailService");
 const {
     classifyGeminiError,
     safeProviderError
@@ -692,4 +693,133 @@ test("agent tool and provider error handling", async t => {
             "temporary_overload"
         );
     });
+
+    await t.test("invokes Gmail search and returns its structured result to Gemini", async () => {
+        const previousSearchEmails = gmailService.searchEmails;
+        const requests = [];
+        gmailService.searchEmails = async args => ({
+            success: true,
+            emails: [{
+                id: "message-1",
+                from: "sender@example.com",
+                subject: "Invoice",
+                date: "Fri, 13 Nov 2026 10:00:00 +0000",
+                snippet: "Your invoice is ready."
+            }],
+            resultCount: 1,
+            query: args.query
+        });
+
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "search_gmail",
+                    args: { query: "from:sender@example.com", maxResults: 5 }
+                }]),
+                { text: "I found one recent invoice email." }
+            ], request => requests.push(request));
+
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Search my Gmail for messages from sender@example.com"
+            );
+            const functionResponse = requests[1].contents.at(-1)
+                .parts[0].functionResponse.response;
+
+            assert.equal(result.success, true);
+            assert.equal(result.toolCalls[0].name, "search_gmail");
+            assert.equal(functionResponse.success, true);
+            assert.equal(functionResponse.result.resultCount, 1);
+            assert.equal(functionResponse.result.emails[0].subject, "Invoice");
+            assert.ok(requests[0].config.tools[0].functionDeclarations.some(
+                declaration => declaration.name === "search_gmail"
+            ));
+        } finally {
+            gmailService.searchEmails = previousSearchEmails;
+        }
+    });
+
+    await t.test("does not claim Gmail was searched when the search tool was skipped", async () => {
+        const ai = createMockAi([
+            { text: "I searched your Gmail and found three emails." }
+        ]);
+        const result = await runAgent(
+            ai,
+            ["test-model"],
+            "Check my Gmail inbox for unread mail"
+        );
+
+        assert.equal(result.success, false);
+        assert.equal(result.status, "failed");
+        assert.match(result.reply, /search tool was not run/i);
+        assert.equal(result.toolCalls.length, 0);
+    });
+
+    await t.test("does not claim success when Gmail search fails", async () => {
+        const previousSearchEmails = gmailService.searchEmails;
+        gmailService.searchEmails = async () => {
+            throw new Error(
+                "Gmail inbox permission is missing. Reauthorize to grant Gmail read access."
+            );
+        };
+
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "search_gmail",
+                    args: { query: "is:unread" }
+                }]),
+                { text: "I searched your Gmail and found no unread messages." }
+            ]);
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Search Gmail for unread messages"
+            );
+
+            assert.equal(result.success, false);
+            assert.equal(result.status, "failed");
+            assert.match(result.reply, /permission is missing/i);
+            assert.doesNotMatch(result.reply, /found no unread messages/i);
+        } finally {
+            gmailService.searchEmails = previousSearchEmails;
+        }
+    });
+
+    await t.test("blocks email sending during a Gmail inbox search request", async () => {
+        const previousSendEmail = gmailService.sendEmailViaGmail;
+        let sendAttempts = 0;
+        gmailService.sendEmailViaGmail = async () => {
+            sendAttempts += 1;
+            throw new Error("Email send should have been blocked.");
+        };
+
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "send_email",
+                    args: {
+                        to: "recipient@example.com",
+                        subject: "Hello",
+                        body: "Message body",
+                        confirmationToken: "test-token"
+                    }
+                }]),
+                { text: "I sent an email." }
+            ]);
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Search my Gmail for unread messages"
+            );
+
+            assert.equal(sendAttempts, 0);
+            assert.equal(result.success, false);
+            assert.match(result.reply, /not allowed as part of a read-only/i);
+        } finally {
+            gmailService.sendEmailViaGmail = previousSendEmail;
+        }
+    });
+
 });
