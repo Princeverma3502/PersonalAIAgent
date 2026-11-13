@@ -174,6 +174,54 @@ test("agent tool and provider error handling", async t => {
         assert.equal(result.success, false);
     });
 
+    await t.test("formats a successful task list locally when Gemini quota fails", async () => {
+        const previousGetTasks = taskHandlers.getTasks;
+        let modelCalls = 0;
+        const quotaError = Object.assign(new Error("Quota exceeded"), {
+            status: 429
+        });
+        taskHandlers.getTasks = async () => ([
+            {
+                id: "task-123",
+                title: "Morning reminder",
+                recurrence: {
+                    cronExpression: "0 9 * * *",
+                    timeZone: "Asia/Kolkata"
+                },
+                runAt: "2099-01-01T03:30:00.000Z",
+                description: "Private details must not be included."
+            }
+        ]);
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "list_scheduled_tasks",
+                    args: {}
+                }]),
+                quotaError
+            ], () => {
+                modelCalls += 1;
+            });
+
+            const result = await runAgentTurn({
+                ai,
+                message: "List my scheduled tasks.",
+                modelList: ["test-model"]
+            });
+
+            assert.equal(result.success, true);
+            assert.equal(result.status, "completed");
+            assert.equal(modelCalls, 2);
+            assert.match(result.reply, /Morning reminder/);
+            assert.match(result.reply, /Schedule: 0 9 \* \* \* \(Asia\/Kolkata\)/);
+            assert.match(result.reply, /Next occurrence: 2099-01-01T03:30:00.000Z/);
+            assert.match(result.reply, /Task ID: task-123/);
+            assert.doesNotMatch(result.reply, /Private details/);
+        } finally {
+            taskHandlers.getTasks = previousGetTasks;
+        }
+    });
+
     await t.test("does not let a same-round success hide another operation's failure", async () => {
         const ai = createMockAi([
             functionCallResponse([
@@ -584,6 +632,58 @@ test("agent tool and provider error handling", async t => {
         );
         assert.match(result.reply, /only displays a reminder/);
         assert.doesNotMatch(result.reply, /The reminder is scheduled/);
+    });
+
+    await t.test("creates a read-only recurring Gmail check from an agent tool call", async () => {
+        const previousCreateRecurringTask = taskHandlers.createRecurringTask;
+        let scheduledArgs;
+        taskHandlers.createRecurringTask = async args => {
+            scheduledArgs = args;
+            return {
+                id: "gmail-check",
+                ...args,
+                runAt: "2099-01-01T03:30:00.000Z",
+                recurrence: {
+                    cronExpression: args.cronExpression,
+                    timeZone: args.timeZone
+                }
+            };
+        };
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "create_recurring_gmail_check",
+                    args: {
+                        title: "Important inbox check",
+                        query: "label:important",
+                        maxResults: 10,
+                        cronExpression: "*/15 * * * *",
+                        timeZone: "Asia/Kolkata"
+                    }
+                }]),
+                { text: "Scheduled." }
+            ]);
+
+            const result = await runAgentTurn({
+                ai,
+                message: "Check important Gmail every 15 minutes and summarize new messages.",
+                timeZone: "Asia/Kolkata",
+                modelList: ["test-model"]
+            });
+
+            assert.equal(result.success, true);
+            assert.equal(result.toolCalls[0].name, "create_recurring_gmail_check");
+            assert.equal(scheduledArgs.actionType, "gmail_check");
+            assert.deepEqual(scheduledArgs.workflow, {
+                query: "label:important",
+                maxResults: 10,
+                seenMessageIds: []
+            });
+            assert.match(result.reply, /read-only Gmail check/);
+            assert.match(result.reply, /no email will be modified or sent/);
+        } finally {
+            taskHandlers.createRecurringTask = previousCreateRecurringTask;
+        }
     });
 
     await t.test("requires a user-provided URL when scheduling webpage summaries", async () => {

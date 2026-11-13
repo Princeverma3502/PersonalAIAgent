@@ -13,6 +13,7 @@ let tasks = [];
 let initialized = false;
 let executionTimer = null;
 let webpageSummaryExecutor = null;
+let gmailCheckExecutor = null;
 
 function setWebpageSummaryExecutor(executor) {
     if (typeof executor !== "function") {
@@ -22,12 +23,57 @@ function setWebpageSummaryExecutor(executor) {
     webpageSummaryExecutor = executor;
 }
 
+function setGmailCheckExecutor(executor) {
+    if (typeof executor !== "function") {
+        throw new Error("Scheduled Gmail check executor must be a function.");
+    }
+
+    gmailCheckExecutor = executor;
+}
+
 function validateScheduledAction(actionType, workflow) {
     if (actionType === undefined || actionType === "reminder") {
         if (workflow !== undefined) {
             throw new Error("Reminder tasks cannot include a workflow.");
         }
         return { actionType: "reminder" };
+    }
+
+    if (actionType === "gmail_check") {
+        if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+            throw new Error("Scheduled Gmail checks require workflow settings.");
+        }
+        if (
+            workflow.query !== undefined &&
+            (typeof workflow.query !== "string" || workflow.query.length > 500)
+        ) {
+            throw new Error("Gmail check queries must be at most 500 characters.");
+        }
+        if (
+            workflow.maxResults !== undefined &&
+            (!Number.isInteger(workflow.maxResults) ||
+                workflow.maxResults < 1 || workflow.maxResults > 20)
+        ) {
+            throw new Error("Gmail checks require 1 to 20 results.");
+        }
+        if (
+            workflow.seenMessageIds !== undefined &&
+            (!Array.isArray(workflow.seenMessageIds) ||
+                !workflow.seenMessageIds.every(id =>
+                    typeof id === "string" && id.length > 0 && id.length <= 200
+                ))
+        ) {
+            throw new Error("Gmail check history is invalid.");
+        }
+
+        return {
+            actionType,
+            workflow: {
+                query: (workflow.query || "").trim(),
+                maxResults: workflow.maxResults || 5,
+                seenMessageIds: (workflow.seenMessageIds || []).slice(-100)
+            }
+        };
     }
 
     if (actionType !== "webpage_summary") {
@@ -381,6 +427,35 @@ async function executeScheduledAction(task) {
         };
     }
 
+    if (actionType === "gmail_check") {
+        if (!gmailCheckExecutor) {
+            throw new Error("Scheduled Gmail check executor is unavailable.");
+        }
+
+        const check = await gmailCheckExecutor(task.workflow);
+        if (
+            !check || typeof check !== "object" ||
+            !Array.isArray(check.seenMessageIds)
+        ) {
+            throw new Error("Scheduled Gmail check returned an invalid result.");
+        }
+        if (!check.suppressNotification &&
+            (typeof check.message !== "string" || !check.message.trim())) {
+            throw new Error("Scheduled Gmail check returned an empty summary.");
+        }
+
+        task.workflow.seenMessageIds = check.seenMessageIds.slice(-100);
+        return {
+            type: "gmail_check",
+            taskId: task.id,
+            title: task.title,
+            message: typeof check.message === "string"
+                ? check.message.trim().slice(0, 2500)
+                : "",
+            suppressNotification: check.suppressNotification === true
+        };
+    }
+
     if (actionType !== "reminder") throw new Error("Unsupported scheduled action.");
 
     return {
@@ -411,7 +486,7 @@ async function getPendingReminders() {
             }
         } else if (
             task.status === "completed" &&
-            ["reminder", "webpage_summary"].includes(task.result?.type) &&
+            ["reminder", "webpage_summary", "gmail_check"].includes(task.result?.type) &&
             !task.reminderAcknowledgedAt
         ) {
             reminders.push({
@@ -448,7 +523,7 @@ async function acknowledgeReminder(taskId) {
     const task = tasks.find(item =>
         item.id === taskId &&
         item.status === "completed" &&
-        ["reminder", "webpage_summary"].includes(item.result?.type) &&
+        ["reminder", "webpage_summary", "gmail_check"].includes(item.result?.type) &&
         !item.reminderAcknowledgedAt
     );
 
@@ -505,15 +580,17 @@ async function executeDueTasks() {
                 const pendingReminders = Array.isArray(task.pendingReminders)
                     ? task.pendingReminders
                     : [];
-                pendingReminders.push({
-                    id: crypto.randomUUID(),
-                    title: task.result.title,
-                    message: task.result.message,
-                    executedAt: task.executedAt,
-                    scheduledFor: task.runAt,
-                    executionDelayMs: task.executionDelayMs,
-                    sourceUrl: task.result.sourceUrl
-                });
+                if (!task.result.suppressNotification) {
+                    pendingReminders.push({
+                        id: crypto.randomUUID(),
+                        title: task.result.title,
+                        message: task.result.message,
+                        executedAt: task.executedAt,
+                        scheduledFor: task.runAt,
+                        executionDelayMs: task.executionDelayMs,
+                        sourceUrl: task.result.sourceUrl
+                    });
+                }
                 if (
                     pendingReminders.length >
                     MAX_PENDING_RECURRING_REMINDERS
@@ -536,6 +613,7 @@ async function executeDueTasks() {
             await saveTasks();
             executedTasks.push(task);
         } catch (error) {
+            const failedAttempt = task.executionAttempts;
             task.result = null;
             task.executedAt = null;
             task.executionDelayMs = null;
@@ -550,6 +628,15 @@ async function executeDueTasks() {
                 task.nextAttemptAt = new Date(
                     Date.now() + retryDelayMs
                 ).toISOString();
+            } else if (task.recurrence && task.actionType === "gmail_check") {
+                task.status = "pending";
+                task.executionAttempts = 0;
+                task.nextAttemptAt = null;
+                task.runAt = getNextCronRun(
+                    task.recurrence.cronExpression,
+                    task.recurrence.timeZone,
+                    new Date()
+                ).toISOString();
             } else {
                 task.status = "failed";
                 task.nextAttemptAt = null;
@@ -557,7 +644,7 @@ async function executeDueTasks() {
 
             await saveTasks();
             console.error(
-                `Scheduled task ${task.id} failed on attempt ${task.executionAttempts}.`
+                `Scheduled task ${task.id} failed on attempt ${failedAttempt}.`
             );
         }
     }
@@ -574,6 +661,7 @@ async function executeDueTasks() {
 module.exports = {
     initializeScheduler,
     setWebpageSummaryExecutor,
+    setGmailCheckExecutor,
     createTask,
     createRecurringTask,
     getTasks,

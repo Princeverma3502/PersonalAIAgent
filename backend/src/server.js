@@ -12,7 +12,8 @@ const {
 } = require("./agent/agentService");
 const { readPublicPage } = require("./agent/browserService");
 const {
-    createScheduledWebpageSummaryExecutor
+    createScheduledWebpageSummaryExecutor,
+    createScheduledGmailCheckExecutor
 } = require("./agent/scheduledWorkflowService");
 const {
     getUserFriendlyGeminiError,
@@ -24,6 +25,7 @@ const {
 const {
     initializeScheduler,
     setWebpageSummaryExecutor,
+    setGmailCheckExecutor,
     getPendingReminders,
     acknowledgeReminder
 } = require("./scheduler/taskScheduler");
@@ -42,6 +44,10 @@ const AI_MODELS = [
 ];
 
 setWebpageSummaryExecutor(createScheduledWebpageSummaryExecutor({
+    ai,
+    modelList: AI_MODELS
+}));
+setGmailCheckExecutor(createScheduledGmailCheckExecutor({
     ai,
     modelList: AI_MODELS
 }));

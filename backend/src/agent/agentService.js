@@ -498,12 +498,67 @@ function getScheduledWebpageSummaryReply(toolAttempts) {
     ].join("\n")).join("\n\n");
 }
 
+function getRecurringGmailCheckReply(toolAttempts) {
+    const tasks = toolAttempts
+        .filter(attempt =>
+            attempt.name === "create_recurring_gmail_check" &&
+            attempt.result.status === "success"
+        )
+        .map(attempt => attempt.result.result?.task)
+        .filter(task => task);
+
+    if (tasks.length === 0) return null;
+
+    return tasks.map(task => [
+        "Recurring read-only Gmail check scheduled.",
+        `Title: ${task.title}`,
+        `Query: ${task.workflow.query || "recent inbox messages"}`,
+        `Schedule: ${task.recurrence.cronExpression} (${task.recurrence.timeZone})`,
+        `Next occurrence: ${task.runAt}`,
+        "Only newly observed matching messages will be summarized; no email will be modified or sent."
+    ].join("\n")).join("\n\n");
+}
+
+function getScheduledTaskListReply(toolAttempts) {
+    const taskLists = toolAttempts
+        .filter(attempt =>
+            attempt.name === "list_scheduled_tasks" &&
+            attempt.result.status === "success"
+        )
+        .map(attempt => attempt.result.result?.tasks)
+        .filter(tasks => Array.isArray(tasks));
+
+    if (taskLists.length === 0) return null;
+
+    const tasks = taskLists[taskLists.length - 1]
+        .filter(task => task && typeof task === "object");
+
+    if (tasks.length === 0) return "Scheduled tasks: none.";
+
+    return [
+        "Scheduled tasks:",
+        ...tasks.map(task => {
+            const schedule = task.recurrence
+                ? `${String(task.recurrence.cronExpression || "recurring")} (${String(task.recurrence.timeZone || "timezone not specified")})`
+                : "One-time";
+            return [
+                `- ${String(task.title || "Untitled task")}`,
+                `  Schedule: ${schedule}`,
+                `  Next occurrence: ${String(task.runAt || "not scheduled")}`,
+                `  Task ID: ${String(task.id || "unknown")}`
+            ].join("\n");
+        })
+    ].join("\n");
+}
+
 function getDeterministicToolReply(toolAttempts) {
     return [
         getEmailDraftReply(toolAttempts),
         getBrowserPageReply(toolAttempts),
         getRecurringReminderReply(toolAttempts),
-        getScheduledWebpageSummaryReply(toolAttempts)
+        getScheduledWebpageSummaryReply(toolAttempts),
+        getRecurringGmailCheckReply(toolAttempts),
+        getScheduledTaskListReply(toolAttempts)
     ].filter(Boolean).join("\n\n");
 }
 
@@ -580,6 +635,11 @@ For Gmail inbox requests:
 - Use search_gmail to search or summarize messages in the connected inbox.
 - Gmail search is read-only. Never send, delete, archive, or modify a message as part of a search.
 - Do not claim that Gmail was searched unless search_gmail completed successfully.
+For recurring Gmail inbox check requests:
+- Use create_recurring_gmail_check, not create_recurring_task or a webpage tool.
+- Use an optional Gmail query, a five-field cron expression, and the user's IANA timezone.
+- Checks must be at least five minutes apart. Clarify an ambiguous schedule before creating one.
+- This workflow is read-only and may only search and summarize newly observed matching messages.
 For email composition or sending requests:
 - Use send_email to prepare the exact recipient, subject, and body for explicit approval.
 - If a compose/send request is routed to draft_email, treat it as a send_email approval request.
@@ -650,7 +710,10 @@ When all required actions are complete, give the user a concise summary.
                     if (
                         isGmailInboxReadRequest(trimmedMessage) &&
                         !toolAttempts.some(attempt =>
-                            attempt.name === "search_gmail"
+                            [
+                                "search_gmail",
+                                "create_recurring_gmail_check"
+                            ].includes(attempt.name)
                         )
                     ) {
                         const toolFailureReply =

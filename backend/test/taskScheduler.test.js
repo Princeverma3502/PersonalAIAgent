@@ -336,3 +336,79 @@ test("scheduled webpage workflows run, recur, and deliver summaries", async t =>
     }
     assert.equal((await scheduler.getPendingReminders()).length, 0);
 });
+
+test("recurring Gmail checks persist, deduplicate, retry, and cancel", async t => {
+    const { directory, scheduler } = await loadIsolatedScheduler(t);
+    const task = await scheduler.createRecurringTask({
+        title: "Important mail",
+        description: "Read-only recurring Gmail inbox check.",
+        cronExpression: "*/5 * * * *",
+        timeZone: "UTC",
+        actionType: "gmail_check",
+        workflow: {
+            query: "label:important",
+            maxResults: 5,
+            seenMessageIds: []
+        }
+    });
+    let calls = 0;
+    scheduler.setGmailCheckExecutor(async workflow => {
+        calls += 1;
+        assert.equal(workflow.query, "label:important");
+        return calls === 1
+            ? {
+                message: "One new important message.",
+                seenMessageIds: ["message-1"],
+                suppressNotification: false
+            }
+            : {
+                message: "",
+                seenMessageIds: ["message-1"],
+                suppressNotification: true
+            };
+    });
+
+    task.runAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.executeDueTasks();
+    assert.equal((await scheduler.getPendingReminders()).length, 1);
+    assert.deepEqual(task.workflow.seenMessageIds, ["message-1"]);
+
+    const restarted = await compileScheduler(directory);
+    const persisted = (await restarted.getTasks()).find(item => item.id === task.id);
+    assert.deepEqual(persisted.workflow.seenMessageIds, ["message-1"]);
+
+    task.runAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.executeDueTasks();
+    assert.equal((await scheduler.getPendingReminders()).length, 1);
+    assert.equal(calls, 2);
+    assert.equal((await scheduler.cancelTask(task.id)).success, true);
+});
+
+test("recurring Gmail checks retry failures and remain scheduled", async t => {
+    const { scheduler } = await loadIsolatedScheduler(t);
+    const task = await scheduler.createRecurringTask({
+        title: "Inbox retry",
+        description: "Read-only recurring Gmail inbox check.",
+        cronExpression: "*/5 * * * *",
+        timeZone: "UTC",
+        actionType: "gmail_check",
+        workflow: { query: "", maxResults: 5, seenMessageIds: [] }
+    });
+    scheduler.setGmailCheckExecutor(async () => {
+        throw new Error("OAuth token expired.");
+    });
+    task.runAt = new Date(Date.now() - 1000).toISOString();
+
+    await scheduler.executeDueTasks();
+    assert.equal(task.status, "pending");
+    assert.equal(task.executionAttempts, 1);
+    task.nextAttemptAt = null;
+    await scheduler.executeDueTasks();
+    task.nextAttemptAt = null;
+    await scheduler.executeDueTasks();
+
+    assert.equal(task.status, "pending");
+    assert.equal(task.executionAttempts, 0);
+    assert.ok(new Date(task.runAt).getTime() > Date.now());
+    assert.equal((await scheduler.getPendingReminders()).length, 0);
+});

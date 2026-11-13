@@ -295,6 +295,53 @@ const TOOL_REGISTRY = Object.freeze({
         })
     },
 
+    create_recurring_gmail_check: {
+        name: "create_recurring_gmail_check",
+        description: "Creates a recurring read-only Gmail inbox check. It searches matching inbox messages, summarizes only newly observed results, and delivers summaries through in-app reminders. It never modifies or sends email.",
+        parametersJsonSchema: {
+            type: "object",
+            properties: {
+                title: { type: "string", description: "Short check title." },
+                query: { type: "string", description: "Optional Gmail search query, up to 500 characters." },
+                maxResults: { type: "integer", minimum: 1, maximum: 20, description: "Maximum matching messages checked per run; defaults to 5." },
+                cronExpression: { type: "string", description: "Five-field cron schedule, at least five minutes apart." },
+                timeZone: { type: "string", description: "IANA timezone for the schedule." }
+            },
+            required: ["title", "cronExpression", "timeZone"],
+            additionalProperties: false
+        },
+        validateArgs: args =>
+            Object.keys(args).length >= 3 &&
+            Object.keys(args).length <= 5 &&
+            Object.keys(args).every(key =>
+                ["title", "query", "maxResults", "cronExpression", "timeZone"].includes(key)
+            ) &&
+            typeof args.title === "string" &&
+            args.title.trim().length > 0 &&
+            args.title.length <= 120 &&
+            typeof args.cronExpression === "string" &&
+            typeof args.timeZone === "string" &&
+            isValidGmailSearch({
+                ...(args.query !== undefined ? { query: args.query } : {}),
+                ...(args.maxResults !== undefined ? { maxResults: args.maxResults } : {})
+            }),
+        handler: async args => ({
+            success: true,
+            task: await createRecurringTask({
+                title: args.title,
+                description: "Read-only recurring Gmail inbox check.",
+                cronExpression: args.cronExpression,
+                timeZone: args.timeZone,
+                actionType: "gmail_check",
+                workflow: {
+                    query: args.query || "",
+                    maxResults: args.maxResults || 5,
+                    seenMessageIds: []
+                }
+            })
+        })
+    },
+
     list_scheduled_tasks: {
         name: "list_scheduled_tasks",
         description: "Lists all scheduled tasks and their statuses.",
