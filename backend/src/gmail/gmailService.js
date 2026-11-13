@@ -4,7 +4,10 @@ const { google } = require("googleapis");
 
 const DEFAULT_TOKEN_PATH = path.join(__dirname, "../../data/gmail-tokens.json");
 const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const MAX_SEARCH_RESULTS = 20;
+const EMAIL_ADDRESS_PATTERN =
+    /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 
 function hasScope(tokens, requiredScope) {
     if (typeof tokens?.scope !== "string") return false;
@@ -30,6 +33,49 @@ function getSafeSearchError(error) {
     return new Error(
         "Gmail inbox search failed because the Gmail API request was unsuccessful. Check your connection and try again."
     );
+}
+
+function getSafeSendError(error) {
+    const status = error?.code || error?.response?.status;
+    const message = typeof error?.message === "string"
+        ? error.message
+        : "";
+    const isAuthorizationError =
+        status === 401 ||
+        status === 403 ||
+        /insufficient.*scope|insufficient authentication scopes/i.test(message);
+    const definitelyFailed =
+        status === 400 ||
+        isAuthorizationError;
+    const safeMessage = isAuthorizationError
+        ? "Gmail send permission is missing or expired. Reauthorize at http://localhost:3000/api/gmail/auth and grant Gmail send access."
+        : status === 400
+            ? "Gmail rejected the email request. Review the recipient and message, then prepare it again."
+            : "Gmail could not confirm whether the email was sent. Check the Sent folder before retrying.";
+    const safeError = new Error(safeMessage);
+    safeError.sendOutcome = definitelyFailed ? "failed" : "unknown";
+    return safeError;
+}
+
+function buildRawEmail({ to, subject, body }) {
+    const encodedBody = Buffer.from(body, "utf8")
+        .toString("base64")
+        .match(/.{1,76}/g)
+        ?.join("\r\n") || "";
+    const encodedSubject = /[^\x20-\x7E]/.test(subject)
+        ? `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`
+        : subject;
+    const mimeMessage = [
+        `To: ${to}`,
+        `Subject: ${encodedSubject}`,
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain; charset=UTF-8",
+        "Content-Transfer-Encoding: base64",
+        "",
+        encodedBody
+    ].join("\r\n");
+
+    return Buffer.from(mimeMessage, "utf8").toString("base64url");
 }
 
 function createGmailService(options = {}) {
@@ -96,7 +142,7 @@ function createGmailService(options = {}) {
             access_type: "offline",
             prompt: "consent",
             include_granted_scopes: false,
-            scope: [GMAIL_READONLY_SCOPE]
+            scope: [GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE]
         });
     }
 
@@ -134,7 +180,9 @@ function createGmailService(options = {}) {
             configured: Boolean(getOAuthClient()),
             connected,
             searchAvailable: connected &&
-                hasScope(storedTokens, GMAIL_READONLY_SCOPE)
+                hasScope(storedTokens, GMAIL_READONLY_SCOPE),
+            sendAvailable: connected &&
+                hasScope(storedTokens, GMAIL_SEND_SCOPE)
         };
     }
 
@@ -229,6 +277,87 @@ function createGmailService(options = {}) {
         }
     }
 
+    async function sendEmailViaGmail({ to, subject, body } = {}) {
+        const recipient =
+            typeof to === "string" ? to.trim() : "";
+        const emailSubject =
+            typeof subject === "string" ? subject.trim() : "";
+        const emailBody =
+            typeof body === "string" ? body.trim() : "";
+
+        if (
+            !EMAIL_ADDRESS_PATTERN.test(recipient) ||
+            recipient.length > 254 ||
+            !emailSubject ||
+            emailSubject.length > 200 ||
+            /[\x00-\x1F\x7F]/.test(emailSubject) ||
+            !emailBody ||
+            emailBody.length > 10000
+        ) {
+            const error = new Error(
+                "A valid recipient, subject, and email body are required."
+            );
+            error.sendOutcome = "failed";
+            throw error;
+        }
+
+        const storedTokens = await readStoredTokens();
+        if (!storedTokens) {
+            const error = new Error(
+                "Gmail is not connected. Open http://localhost:3000/api/gmail/auth and authorize your account."
+            );
+            error.sendOutcome = "failed";
+            throw error;
+        }
+        if (!hasScope(storedTokens, GMAIL_SEND_SCOPE)) {
+            const error = new Error(
+                "Gmail send permission is missing. Reauthorize at http://localhost:3000/api/gmail/auth and grant Gmail send access."
+            );
+            error.sendOutcome = "failed";
+            throw error;
+        }
+
+        const oauth2Client = await getAuthenticatedClient();
+        if (!oauth2Client) {
+            const error = new Error(
+                "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI."
+            );
+            error.sendOutcome = "failed";
+            throw error;
+        }
+
+        try {
+            const gmail = googleApi.gmail({
+                version: "v1",
+                auth: oauth2Client
+            });
+            const result = await gmail.users.messages.send({
+                userId: "me",
+                requestBody: {
+                    raw: buildRawEmail({
+                        to: recipient,
+                        subject: emailSubject,
+                        body: emailBody
+                    })
+                },
+                fields: "id"
+            });
+
+            if (typeof result.data?.id !== "string" || !result.data.id) {
+                const error = new Error(
+                    "Gmail could not confirm whether the email was sent. Check the Sent folder before retrying."
+                );
+                error.sendOutcome = "unknown";
+                throw error;
+            }
+
+            return { success: true };
+        } catch (error) {
+            if (error?.sendOutcome) throw error;
+            throw getSafeSendError(error);
+        }
+    }
+
     return {
         getOAuthClient,
         readStoredTokens,
@@ -238,6 +367,7 @@ function createGmailService(options = {}) {
         exchangeCodeForTokens,
         gmailStatus,
         searchEmails,
+        sendEmailViaGmail,
         setGoogleApi(nextGoogleApi) {
             googleApi = nextGoogleApi || google;
             return googleApi;

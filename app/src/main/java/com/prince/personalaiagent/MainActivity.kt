@@ -19,7 +19,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.*
@@ -40,6 +42,7 @@ import com.prince.personalaiagent.data.remote.AgentApiException
 import com.prince.personalaiagent.data.remote.AgentResponse
 import com.prince.personalaiagent.data.remote.ChatApiClient
 import com.prince.personalaiagent.data.remote.EmailDraft
+import com.prince.personalaiagent.data.remote.PendingEmailApproval
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
 import dev.jeziellago.compose.markdowntext.MarkdownText
 import kotlinx.coroutines.Dispatchers
@@ -133,6 +136,12 @@ fun AgentScreen() {
     }
 
     var isLoading by remember {
+        mutableStateOf(false)
+    }
+    var pendingEmailApproval by remember {
+        mutableStateOf<PendingEmailApproval?>(null)
+    }
+    var isApprovingEmail by remember {
         mutableStateOf(false)
     }
 
@@ -314,6 +323,71 @@ fun AgentScreen() {
             } finally {
                 isClearingConversation = false
                 showClearConversationConfirmation = false
+            }
+        }
+    }
+
+    fun approvePendingEmail() {
+        val approval = pendingEmailApproval ?: return
+        if (isApprovingEmail) return
+
+        isApprovingEmail = true
+        coroutineScope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    apiClient.approveSensitiveAction(
+                        type = "send_email",
+                        approvalToken = approval.approvalToken
+                    )
+                }
+            } catch (error: Exception) {
+                Log.w(
+                    "EmailApproval",
+                    "Could not confirm the email approval result.",
+                    error
+                )
+                null
+            }
+
+            val messageText = when {
+                result?.success == true ->
+                    "Email sent successfully."
+
+                result == null || result.outcome == "unknown" ->
+                    "Gmail could not confirm whether the email was sent. Check the Sent folder before retrying."
+
+                else ->
+                    "Email was not sent: ${result.message}"
+            }
+            val actionStatus = when {
+                result?.success == true -> "success"
+                result?.sent == false || result?.outcome == "failed" -> "failed"
+                else -> "unknown"
+            }
+            val approvalResultMessage = ChatMessage(
+                id = nextChatMessageId(messages),
+                text = messageText,
+                isUser = false,
+                toolName = "send_email",
+                toolStatus = actionStatus
+            )
+            messages.add(approvalResultMessage)
+
+            try {
+                withContext(Dispatchers.IO) {
+                    conversationRepository.saveMessage(
+                        approvalResultMessage.id,
+                        approvalResultMessage.text,
+                        approvalResultMessage.isUser
+                    )
+                }
+                conversationHistoryError = null
+            } catch (error: Exception) {
+                conversationHistoryError =
+                    "Could not save the email result to chat history: ${error.message ?: "storage error"}"
+            } finally {
+                pendingEmailApproval = null
+                isApprovingEmail = false
             }
         }
     }
@@ -600,6 +674,10 @@ fun AgentScreen() {
                 }
             }
 
+            result.pendingEmailApproval?.let { approval ->
+                pendingEmailApproval = approval
+            }
+
             // UPDATE PENDING DELETION STATE
             when (result.toolName) {
 
@@ -682,6 +760,48 @@ fun AgentScreen() {
 
             isLoading = false
         }
+    }
+
+    pendingEmailApproval?.let { approval ->
+        AlertDialog(
+            onDismissRequest = {
+                if (!isApprovingEmail) pendingEmailApproval = null
+            },
+            title = { Text("Send this email?") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("To: ${approval.to}")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Subject:")
+                    Text(approval.subject)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Message:")
+                    Text(approval.body)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Approving sends this email from your connected Gmail account.")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { approvePendingEmail() },
+                    enabled = !isApprovingEmail
+                ) {
+                    Text(if (isApprovingEmail) "Sending..." else "Approve and send")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { pendingEmailApproval = null },
+                    enabled = !isApprovingEmail
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showClearConversationConfirmation) {
@@ -940,6 +1060,8 @@ internal fun ChatMessageList(
                             val executionResult = when (message.toolStatus) {
                                 "success" -> "succeeded"
                                 "failed" -> "failed"
+                                "pending_approval" -> "awaiting approval"
+                                "unknown" -> "result unconfirmed"
                                 else -> "status unavailable"
                             }
 

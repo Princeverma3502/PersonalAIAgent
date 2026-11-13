@@ -809,6 +809,134 @@ test("agent tool and provider error handling", async t => {
         assert.match(result.reply, /not allowed as part of a read-only/i);
     });
 
+    await t.test("returns pending email approval to the app without sending or exposing its token to Gemini", async () => {
+        const previousStatus = gmailService.gmailStatus;
+        const previousSend = gmailService.sendEmailViaGmail;
+        const requests = [];
+        let sendCalls = 0;
+        gmailService.gmailStatus = async () => ({
+            configured: true,
+            connected: true,
+            searchAvailable: true,
+            sendAvailable: true
+        });
+        gmailService.sendEmailViaGmail = async () => {
+            sendCalls += 1;
+            throw new Error("The agent must not send directly.");
+        };
+
+        try {
+            const ai = createMockAi([
+                functionCallResponse([{
+                    name: "send_email",
+                    args: {
+                        to: "recipient@example.com",
+                        subject: "Hello",
+                        body: "Message body"
+                    }
+                }]),
+                { text: "I sent an email." }
+            ], request => requests.push(request));
+            const result = await runAgent(
+                ai,
+                ["test-model"],
+                "Send an email to recipient@example.com"
+            );
+
+            assert.equal(result.success, true);
+            assert.equal(result.status, "pending_approval");
+            assert.equal(result.pendingAction.type, "send_email");
+            assert.deepEqual(result.pendingAction.payload, {
+                to: "recipient@example.com",
+                subject: "Hello",
+                body: "Message body"
+            });
+            assert.equal(typeof result.pendingAction.approvalToken, "string");
+            assert.equal(result.toolCalls[0].status, "pending_approval");
+            assert.doesNotMatch(
+                JSON.stringify(result.toolCalls),
+                new RegExp(result.pendingAction.approvalToken)
+            );
+            assert.equal(requests.length, 1);
+            assert.doesNotMatch(
+                JSON.stringify(requests),
+                new RegExp(result.pendingAction.approvalToken)
+            );
+            assert.equal(sendCalls, 0);
+        } finally {
+            gmailService.gmailStatus = previousStatus;
+            gmailService.sendEmailViaGmail = previousSend;
+        }
+    });
+
+    await t.test("preserves compose approval after overload fallback selects draft_email", async () => {
+        const previousStatus = gmailService.gmailStatus;
+        const previousSend = gmailService.sendEmailViaGmail;
+        const attemptedModels = [];
+        let sendCalls = 0;
+        gmailService.gmailStatus = async () => ({
+            configured: true,
+            connected: true,
+            searchAvailable: true,
+            sendAvailable: true
+        });
+        gmailService.sendEmailViaGmail = async () => {
+            sendCalls += 1;
+            throw new Error("The agent must not send directly.");
+        };
+
+        const aborted = Object.assign(
+            new Error("operation aborted"),
+            { name: "APIUserAbortError" }
+        );
+        const overloaded = Object.assign(
+            new Error("Service temporarily unavailable"),
+            { status: 503 }
+        );
+
+        try {
+            const ai = createMockAi([
+                overloaded,
+                aborted,
+                functionCallResponse([{
+                    name: "draft_email",
+                    args: {
+                        to: "user@example.com",
+                        subject: "AURVIZ Email Test",
+                        body: "This email was sent through my Personal AI Agent."
+                    }
+                }])
+            ], request => attemptedModels.push(request.model));
+
+            const result = await runAgent(
+                ai,
+                ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"],
+                "Compose an email to my own Gmail address with subject AURVIZ Email Test and body This email was sent through my Personal AI Agent. Show me the approval dialog before sending."
+            );
+
+            assert.deepEqual(attemptedModels, [
+                "gemini-3.8-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash-lite"
+            ]);
+            assert.equal(result.success, true);
+            assert.equal(result.status, "pending_approval");
+            assert.equal(result.pendingAction.type, "send_email");
+            assert.deepEqual(result.pendingAction.payload, {
+                to: "user@example.com",
+                subject: "AURVIZ Email Test",
+                body: "This email was sent through my Personal AI Agent."
+            });
+            assert.equal(typeof result.pendingAction.approvalToken, "string");
+            assert.equal(result.toolCalls[0].name, "send_email");
+            assert.equal(result.toolCalls[0].status, "pending_approval");
+            assert.equal(sendCalls, 0);
+        } finally {
+            gmailService.gmailStatus = previousStatus;
+            gmailService.sendEmailViaGmail = previousSend;
+        }
+    });
+
     await t.test("instructs Gemini not to claim persistent memory was written", async () => {
         const requests = [];
         const ai = createMockAi([

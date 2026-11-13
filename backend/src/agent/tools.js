@@ -11,6 +11,9 @@ const {
     validateWebUrl
 } = require("./browserService");
 const gmailService = require("../gmail/gmailService");
+const { createPendingEmailApproval } = require("./actionApproval");
+const EMAIL_ADDRESS_PATTERN =
+    /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 
 function isValidEmailDraft(args) {
     const recipient = args.to;
@@ -21,7 +24,7 @@ function isValidEmailDraft(args) {
         Object.keys(args).length === 3 &&
         typeof recipient === "string" &&
         recipient.length <= 254 &&
-        /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(recipient.trim()) &&
+        EMAIL_ADDRESS_PATTERN.test(recipient.trim()) &&
         typeof subject === "string" &&
         subject.trim().length > 0 &&
         subject.trim().length <= 200 &&
@@ -331,7 +334,7 @@ const TOOL_REGISTRY = Object.freeze({
 
     send_email: {
         name: "send_email",
-        description: "Email sending is currently disabled because the backend cannot securely bind user approval to the exact message. Use draft_email to prepare a message for user review.",
+        description: "Prepare an email for explicit user approval. This tool never sends email; the Android app must show the exact recipient, subject, and body and obtain user approval.",
         parametersJsonSchema: {
             type: "object",
             properties: {
@@ -354,18 +357,48 @@ const TOOL_REGISTRY = Object.freeze({
         validateArgs: args =>
             Object.keys(args).length === 3 &&
             typeof args.to === "string" &&
-            /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(args.to.trim()) &&
+            EMAIL_ADDRESS_PATTERN.test(args.to.trim()) &&
             typeof args.subject === "string" &&
             args.subject.trim().length > 0 &&
             args.subject.trim().length <= 200 &&
             typeof args.body === "string" &&
             args.body.trim().length > 0 &&
             args.body.length <= 10000,
-        handler: async () => ({
-            success: false,
-            sent: false,
-            message: "Email sending is disabled because secure approval is not available. I can prepare a draft for you to review, but it has not been sent."
-        })
+        handler: async args => {
+            const status = await gmailService.gmailStatus();
+            if (!status.connected) {
+                return {
+                    success: false,
+                    sent: false,
+                    message: "Gmail is not connected. Authorize Gmail before preparing an email to send."
+                };
+            }
+            if (!status.sendAvailable) {
+                return {
+                    success: false,
+                    sent: false,
+                    message: "Gmail send permission is missing. Reauthorize Gmail before preparing an email to send."
+                };
+            }
+
+            const pendingAction = createPendingEmailApproval({
+                to: args.to,
+                subject: args.subject,
+                body: args.body
+            });
+
+            return {
+                success: true,
+                requiresApproval: true,
+                message: "Email prepared for approval; it has not been sent.",
+                approvalToken: pendingAction.approvalToken,
+                pendingAction: {
+                    type: pendingAction.type,
+                    payload: pendingAction.payload,
+                    expiresAt: pendingAction.expiresAt
+                }
+            };
+        }
     },
 
     search_gmail: {

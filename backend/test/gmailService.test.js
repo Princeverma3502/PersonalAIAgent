@@ -9,13 +9,15 @@ const { getToolDeclaration, validateToolName } =
     require("../src/agent/tools");
 
 const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
-const LEGACY_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const BOTH_SCOPES = `${READ_SCOPE} ${SEND_SCOPE}`;
 
 function makeFakeGoogleApi(options = {}) {
     const calls = {
         authorizationOptions: [],
         list: [],
-        get: []
+        get: [],
+        send: []
     };
     const api = {
         auth: {
@@ -67,6 +69,11 @@ function makeFakeGoogleApi(options = {}) {
                                 payload: { headers: [] }
                             }
                         };
+                    },
+                    send: async args => {
+                        calls.send.push(args);
+                        if (options.sendError) throw options.sendError;
+                        return { data: options.sendData || { id: "sent-message" } };
                     }
                 }
             }
@@ -139,6 +146,7 @@ test("gmail status reports unconfigured state before OAuth setup", async () => {
         assert.equal(status.configured, false);
         assert.equal(status.connected, false);
         assert.equal(status.searchAvailable, false);
+        assert.equal(status.sendAvailable, false);
         assert.throws(() => service.buildAuthorizationUrl(), /not configured/i);
     } finally {
         restoreEnvSnapshot(original);
@@ -146,15 +154,16 @@ test("gmail status reports unconfigured state before OAuth setup", async () => {
     }
 });
 
-test("Gmail authorization requests readonly access only", async () => {
+test("Gmail authorization requests readonly and send access with fresh consent", async () => {
     await withGmailService({}, async (service, api) => {
         const url = service.buildAuthorizationUrl();
         const scopes = api.calls.authorizationOptions[0].scope;
 
         assert.ok(url.includes(encodeURIComponent(READ_SCOPE)));
+        assert.ok(url.includes(encodeURIComponent(SEND_SCOPE)));
         assert.equal(api.calls.authorizationOptions[0].prompt, "consent");
         assert.equal(api.calls.authorizationOptions[0].include_granted_scopes, false);
-        assert.deepEqual(scopes, [READ_SCOPE]);
+        assert.deepEqual(scopes, [READ_SCOPE, SEND_SCOPE]);
     });
 });
 
@@ -163,11 +172,11 @@ test("Gmail reauthorization replaces tokens and preserves an existing refresh to
         tokens: {
             access_token: "old-access-token",
             refresh_token: "old-refresh-token",
-            scope: LEGACY_SEND_SCOPE
+            scope: SEND_SCOPE
         },
         issuedTokens: {
             access_token: "new-access-token",
-            scope: READ_SCOPE
+            scope: BOTH_SCOPES
         }
     }, async service => {
         await service.exchangeCodeForTokens("authorization-code");
@@ -175,11 +184,12 @@ test("Gmail reauthorization replaces tokens and preserves an existing refresh to
 
         assert.equal(savedTokens.access_token, "new-access-token");
         assert.equal(savedTokens.refresh_token, "old-refresh-token");
-        assert.equal(savedTokens.scope, READ_SCOPE);
+        assert.equal(savedTokens.scope, BOTH_SCOPES);
         assert.deepEqual(await service.gmailStatus(), {
             configured: true,
             connected: true,
-            searchAvailable: true
+            searchAvailable: true,
+            sendAvailable: true
         });
     });
 });
@@ -320,7 +330,7 @@ test("Gmail search requires readonly scope and sanitizes API errors", async t =>
         await withGmailService({
             tokens: {
                 access_token: "send-only-token",
-                scope: LEGACY_SEND_SCOPE
+                scope: SEND_SCOPE
             }
         }, async service => {
             await assert.rejects(
@@ -409,28 +419,109 @@ test("search_gmail is registered with a bounded read-only declaration", () => {
     assert.equal(tool.validateArgs({ arbitraryMethod: "delete" }), false);
 });
 
-test("send_email is explicit and unavailable while Gmail search remains registered", async () => {
+test("send_email is registered but only prepares a server-side pending approval", async () => {
     const tool = validateToolName("send_email");
     const searchTool = validateToolName("search_gmail");
+    const originalStatus = gmailService.gmailStatus;
     assert.ok(tool);
     assert.ok(searchTool);
-    assert.equal(typeof gmailService.sendEmailViaGmail, "undefined");
-    assert.equal(
-        tool.validateArgs({
+
+    gmailService.gmailStatus = async () => ({
+        configured: true,
+        connected: true,
+        searchAvailable: true,
+        sendAvailable: true
+    });
+
+    try {
+        const result = await tool.handler({
             to: "friend@example.com",
             subject: "Status update",
             body: "The project is shipping successfully."
-        }),
-        true
-    );
+        });
 
-    const result = await tool.handler({
-        to: "friend@example.com",
-        subject: "Status update",
-        body: "The project is shipping successfully."
+        assert.equal(result.success, true);
+        assert.equal(result.requiresApproval, true);
+        assert.equal(result.pendingAction.type, "send_email");
+        assert.equal(result.pendingAction.payload.to, "friend@example.com");
+        assert.equal(typeof result.approvalToken, "string");
+        assert.equal(typeof gmailService.sendEmailViaGmail, "function");
+    } finally {
+        gmailService.gmailStatus = originalStatus;
+    }
+});
+
+test("Gmail send requires the send scope and submits only the encoded approved message", async t => {
+    await t.test("refuses a readonly-only grant without calling Gmail", async () => {
+        await withGmailService({
+            tokens: {
+                access_token: "readonly-token",
+                scope: READ_SCOPE
+            }
+        }, async service => {
+            await assert.rejects(
+                service.sendEmailViaGmail({
+                    to: "friend@example.com",
+                    subject: "Hello",
+                    body: "Message"
+                }),
+                /Gmail send permission is missing/i
+            );
+        });
     });
 
-    assert.equal(result.success, false);
-    assert.equal(result.sent, false);
-    assert.match(result.message, /disabled.*secure approval/i);
+    await t.test("sends a MIME message with the granted scope", async () => {
+        await withGmailService({
+            tokens: {
+                access_token: "send-token",
+                scope: BOTH_SCOPES
+            }
+        }, async (service, api) => {
+            const result = await service.sendEmailViaGmail({
+                to: "friend@example.com",
+                subject: "Hello",
+                body: "Message"
+            });
+            const raw = Buffer.from(
+                api.calls.send[0].requestBody.raw,
+                "base64url"
+            ).toString("utf8");
+
+            assert.deepEqual(result, { success: true });
+            assert.equal(api.calls.send.length, 1);
+            assert.equal(api.calls.send[0].userId, "me");
+            assert.match(raw, /To: friend@example\.com/);
+            assert.match(raw, /Subject: Hello/);
+            assert.match(raw, /TWVzc2FnZQ==/);
+            assert.equal(api.calls.send[0].fields, "id");
+        });
+    });
+
+    await t.test("sanitizes Gmail errors without exposing content or credentials", async () => {
+        const privateError = new Error(
+            "private message body and secret-token-123"
+        );
+        privateError.code = 500;
+        await withGmailService({
+            tokens: {
+                access_token: "send-token",
+                scope: BOTH_SCOPES
+            },
+            sendError: privateError
+        }, async service => {
+            await assert.rejects(
+                service.sendEmailViaGmail({
+                    to: "friend@example.com",
+                    subject: "Hello",
+                    body: "Private message"
+                }),
+                error => {
+                    assert.equal(error.sendOutcome, "unknown");
+                    assert.match(error.message, /could not confirm/i);
+                    assert.doesNotMatch(error.message, /private message|secret-token/i);
+                    return true;
+                }
+            );
+        });
+    });
 });

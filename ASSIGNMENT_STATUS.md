@@ -12,9 +12,9 @@
 - Gemini agent tool/function calling with argument validation and multi-round execution.
 - Ordered model fallback and categorized provider diagnostics with credential redaction.
 - JSON-backed one-time and timezone-aware recurring reminder creation, listing, cancellation, due execution, bounded retries, foreground polling, and best-effort WorkManager notification delivery. In-chat delivery was manually verified; the debug worker trigger contacted the backend, but no pending reminder was available to verify an Android notification.
-- Validated email draft preparation with user-initiated handoff to a compatible email app. Agent-side Gmail sending is disabled because a server-verified approval flow bound to the exact message is not implemented.
+- Approval-gated Gmail sending: `send_email` creates a short-lived, one-time server-side approval bound to the exact recipient, subject, and body. Android presents the full payload and sends only the token after the user explicitly approves; cancel does not call the approval endpoint. No real email has been sent during testing.
 - Read-only Gmail inbox search tool using Gmail search syntax, Inbox label filtering, metadata-only message fetches, and a 20-result cap. Google API behavior is covered by mocked tests; the user also manually verified a live search returned results.
-- Gmail OAuth authorization requests only `gmail.readonly`; stored scope metadata is checked before inbox search. Reauthorize through `/api/gmail/auth` if search is unavailable after a scope change.
+- Gmail OAuth requests `gmail.readonly` and `gmail.send` with fresh consent; stored scope metadata is checked independently for search and sending. Reauthorize through `/api/gmail/auth` before sending if the existing token lacks the new scope.
 - Read-only retrieval of explicitly provided public webpages with bounded text extraction and optional search; batch reads support up to three distinct, user-provided URLs per request.
 - One-time and recurring scheduled public-webpage summaries for exact URLs supplied by the user; page retrieval and Gemini summarization run at the scheduled time and deliver results through reminders.
 - Controlled Android browser with HTTP(S) navigation, page history, scrolling, and bounded visible-text extraction.
@@ -28,19 +28,19 @@
 - **Scheduled tasks:** one-time and recurring reminders and read-only public-webpage summaries are supported. WorkManager checks at startup and on its 15-minute minimum periodic interval, constrained by network access and Android battery policies. In-chat delivery was verified; the debug trigger reached the backend, but it found zero pending reminders, so system-notification posting remains unverified.
 - **Gemini integration:** fallback and tool recovery are covered with mocks. Live chat responses were confirmed by the user; occasional model overload or incomplete final responses remain.
 - **Voice input:** permission and error handling are implemented and unit-tested. Live speech-to-text was verified on the emulator, where recognized text appeared in chat.
-- **Android runtime:** latest verification passed 15 Android unit tests and 13 emulator instrumentation tests; the debug APK built and installed successfully. The user also confirmed chat-history and memory persistence after reopening. This is not full interactive testing.
+- **Android runtime:** latest verification passed 16 Android unit tests and built the debug APK. The previous emulator instrumentation run passed 13 tests; instrumentation tests were not run in this verification pass. The user also confirmed chat-history and memory persistence after reopening. This is not full interactive testing.
 - **Performance analysis:** Android request latency and PSS plus backend scheduler delay are surfaced. A reproducible mock baseline is available; live Gemini and physical-device benchmarks remain uncollected.
 - **Documentation:** README, architecture, assignment status, and interview notes are present.
 - **Web browsing:** the agent can read one explicitly provided URL, batches of up to three explicitly provided URLs, and (when requested) at most two static links on the same origin as an explicitly provided seed URL. Retrieval is bounded and read-only. The in-app browser remains user-controlled. The agent cannot click controls, submit forms, or authenticate.
-- **Gmail:** read-only Inbox search is implemented and covered by mocked Google API tests. The user manually confirmed OAuth connection, `/api/gmail/status`, and a live search that returned results. Search returns sender, subject, date, and Gmail snippet only; it does not fetch message bodies. Agent-side sending is deliberately disabled.
-- **Gmail live validation:** the user confirmed live OAuth connection and inbox search; these manual checks are distinct from mocked automated tests. Agent-side email sending is disabled, not merely unverified.
+- **Gmail:** read-only Inbox search and approval-gated sending are implemented. The user manually confirmed OAuth connection, `/api/gmail/status`, and live search; search returns sender, subject, date, and snippet only, and does not fetch message bodies. Automated send tests use a fake Gmail API and never send real email. Live sending and reauthorization for `gmail.send` have not been verified.
+- **Gmail approval security:** pending approvals bind an expiring one-time token to the server-stored payload. The model never receives the token or calls Gmail sending. The backend has no authentication; this flow is for a private local development setup only, not public deployment.
 - **Scheduled workflow scope:** webpage summaries are supported only for explicit public URLs; email checks and other arbitrary actions are not implemented.
 - **Tool failure correlation:** same-round same-name calls are kept distinct and ambiguous multi-failure retries remain failures. A single failure followed by a same-name call in the next round can be inferred as a correction when arguments change; this is necessarily heuristic.
 
 ## Not implemented
 
 - Gmail-backed scheduled email checks and email delete/archive actions.
-- Agent-side email sending is disabled. The `send_email` tool and `/api/actions/approve` fail closed; Gmail's send API method and `gmail.send` OAuth scope have been removed.
+- Live Gmail sending has not been verified. Reauthorization for the added `gmail.send` scope is required; any uncertain Gmail API delivery response requires checking the Sent folder before retrying.
 - Agent-driven browser automation, authentication, and page actions such as clicking or submitting forms.
 - Gmail/OAuth-backed scheduled email checks or other arbitrary scheduled actions.
 - Production backend authentication and deployment.
@@ -51,7 +51,7 @@
 | Check | Result |
 |---|---|
 | `node --check` for backend source/tests | Passed. |
-| `npm --prefix backend test` | Latest run passed: 71 tests, 0 failures. Gmail search, OAuth scope handling, and agent tool flow use mocked Google/Gemini APIs; browser and scheduler tests use mocks or isolated storage. |
+| `npm --prefix backend test` | Latest run passed: 78 tests, 0 failures. Gmail search, OAuth scope handling, send approval, and agent tool flow use mocked Google/Gemini APIs; browser and scheduler tests use mocks or isolated storage. No real email was sent. |
 | Agent tool-failure handling | Mock tests pass for handler failure, exception, corrected retry, same-round same-name calls, multiple unresolved failures, multi-tool history, model fallback and redaction. |
 | Email draft handling | Mock tests pass for validated draft display, explicit not-sent messaging, and malformed recipient rejection. |
 | Public webpage retrieval | Tests cover URL/IP restrictions, redirect validation, text extraction, search, explicit URL and link-navigation intent checks, batches of up to three pages, same-origin linked-page reads, cross-origin redirect rejection, and no follow-up tool round. A live agent-tool smoke test successfully read and searched `https://example.com` using mock Gemini responses. |
@@ -67,7 +67,8 @@
 | `GET /health` | Returned success once with backend running. |
 | Malformed JSON request | Returned JSON error with HTTP 400. |
 | Direct live `POST /api/agent` smoke test | Not separately performed. The user confirmed AI responses through the Android app. |
-| `.\gradlew.bat testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin connectedDebugAndroidTest` | Passed: 15 Android unit tests and 13 emulator instrumentation tests; debug APK built and installed successfully. |
+| `.\gradlew.bat testDebugUnitTest assembleDebug` | Latest run passed: 16 Android unit tests; debug APK built successfully. |
+| `compileDebugAndroidTestKotlin connectedDebugAndroidTest` | Previous verification passed: instrumentation sources compiled and 13 emulator instrumentation tests passed. Not rerun in this verification pass. |
 | Android API environment configuration | Debug custom HTTP URL generated successfully; release APK built with HTTPS configuration; release cleartext traffic disabled and HTTP release URL rejected. |
 | User-confirmed manual emulator checks | Live Gemini chat works, with occasional model overload or incomplete final responses; chat history and local memory persisted after reopening; speech-to-text returned recognized text; Gmail OAuth and read-only search worked; reminder scheduling and in-chat delivery worked. These are manual checks, not all automated. |
 | DEBUG WorkManager trigger | Started the existing worker and reached the backend. The backend returned zero pending reminders, so this did not verify system notification posting. The trigger is absent from the release manifest. |
@@ -97,7 +98,7 @@ These manual checks are separate from automated tests. Automated Gmail API tests
 - Live Gemini response behavior was confirmed by the user through the Android app; a separate direct backend endpoint smoke test was not performed.
 - Gemini can occasionally report model overload or return an incomplete final response.
 - Tool retry correlation cannot perfectly distinguish a corrected call from a new same-name operation when arguments change; ambiguous failures are handled conservatively.
-- Email drafts are not persisted. Users can review and send drafts through an installed email app; the agent itself cannot send messages.
+- Email drafts are not persisted. Users can review and send drafts through an installed email app. Agent-side sends require explicit approval; backend authentication and encrypted token storage remain incomplete, so do not expose this development backend publicly.
 - Existing Google OAuth grants are not revoked by this code change. Revoke a previous Gmail send grant from the Google Account security settings if you want to remove that old consent.
 - Gmail OAuth tokens are stored in a local JSON file ignored by Git; encrypted token storage is not implemented. Do not expose or commit the token file, `.env`, or credentials.
 - Backend webpage retrieval requires exact user-provided URLs for direct reads. Link navigation is only allowed on explicit request, only for static same-origin links, and is limited to two related pages; the in-app browser allows user-controlled HTTP(S) navigation. Neither flow supports agent-driven page actions or authentication.

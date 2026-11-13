@@ -17,8 +17,24 @@ data class AgentResponse(
     val status: String,
     val toolName: String?,
     val emailDrafts: List<EmailDraft> = emptyList(),
+    val pendingEmailApproval: PendingEmailApproval? = null,
     val browserUrl: String? = null,
     val requestDurationMs: Long? = null
+)
+
+data class PendingEmailApproval(
+    val to: String,
+    val subject: String,
+    val body: String,
+    val approvalToken: String,
+    val expiresAt: String
+)
+
+data class SensitiveActionResult(
+    val success: Boolean,
+    val sent: Boolean?,
+    val outcome: String,
+    val message: String
 )
 
 data class EmailDraft(
@@ -35,38 +51,45 @@ data class AgentReminder(
     val sourceUrl: String? = null
 )
 
-internal fun requireSuccessfulSensitiveActionResponse(
+internal fun resolveSensitiveActionResponse(
     responseCode: Int,
     success: Boolean,
+    sent: Boolean?,
+    outcome: String?,
     message: String?
-): String {
+): SensitiveActionResult {
     val safeMessage = message?.takeIf { it.isNotBlank() && it != "null" }
-    if (responseCode !in 200..299 || !success) {
-        throw IOException(
-            safeMessage ?: "Sensitive action request failed with HTTP $responseCode."
-        )
-    }
-
-    return safeMessage ?: "Action completed."
+    val confirmed = responseCode in 200..299 && success && sent == true
+    return SensitiveActionResult(
+        success = confirmed,
+        sent = sent,
+        outcome = outcome?.takeIf { it.isNotBlank() && it != "null" }
+            ?: if (confirmed) "sent" else if (sent == false) "failed" else "unknown",
+        message = safeMessage
+            ?: if (confirmed) "Email sent successfully."
+            else "Gmail did not confirm whether the email was sent."
+    )
 }
 
 internal fun parseSensitiveActionResponse(
     responseCode: Int,
     responseText: String
-): String {
+): SensitiveActionResult {
     val json = try {
         JSONObject(responseText)
-    } catch (_: JSONException) {
-        return requireSuccessfulSensitiveActionResponse(
-            responseCode,
-            success = false,
-            message = null
+    } catch (error: JSONException) {
+        throw IOException(
+            "Could not confirm whether Gmail sent the email. Check the Sent folder before retrying.",
+            error
         )
     }
 
-    return requireSuccessfulSensitiveActionResponse(
+    val sent = if (json.isNull("sent")) null else json.optBoolean("sent", false)
+    return resolveSensitiveActionResponse(
         responseCode = responseCode,
         success = json.optBoolean("success", false),
+        sent = sent,
+        outcome = json.optString("outcome"),
         message = json.optString("message")
     )
 }
@@ -160,8 +183,8 @@ class ChatApiClient {
 
     fun approveSensitiveAction(
         type: String,
-        payload: Map<String, String> = emptyMap()
-    ): String {
+        approvalToken: String
+    ): SensitiveActionResult {
         val connection = URL("$API_BASE_URL/api/actions/approve")
             .openConnection() as HttpURLConnection
 
@@ -174,15 +197,29 @@ class ChatApiClient {
 
             val body = JSONObject()
                 .put("type", type)
-                .put("payload", JSONObject(payload))
+                .put("approvalToken", approvalToken)
                 .toString()
 
             connection.outputStream.use { output ->
                 output.write(body.toByteArray(Charsets.UTF_8))
             }
 
-            val responseCode = connection.responseCode
-            val responseText = readResponse(connection, responseCode)
+            val responseCode = try {
+                connection.responseCode
+            } catch (error: IOException) {
+                throw IOException(
+                    "Could not confirm whether Gmail sent the email. Check the Sent folder before retrying.",
+                    error
+                )
+            }
+            val responseText = try {
+                readResponse(connection, responseCode)
+            } catch (error: IOException) {
+                throw IOException(
+                    "Could not confirm whether Gmail sent the email. Check the Sent folder before retrying.",
+                    error
+                )
+            }
             return parseSensitiveActionResponse(responseCode, responseText)
         } finally {
             connection.disconnect()
@@ -294,6 +331,7 @@ class ChatApiClient {
                 ?: singleTool?.optString("status")
                     ?.takeIf { it.isNotBlank() && it != "null" }
                 ?: "unknown"
+            val pendingEmailApproval = parsePendingEmailApproval(json, status)
 
             val agentResponse = AgentResponse(
                 reply = json.optString(
@@ -303,6 +341,7 @@ class ChatApiClient {
                 status = status,
                 toolName = toolName,
                 emailDrafts = emailDrafts,
+                pendingEmailApproval = pendingEmailApproval,
                 browserUrl = browserUrl,
                 requestDurationMs = SystemClock.elapsedRealtime() - requestStartedAt
             )
@@ -316,6 +355,43 @@ class ChatApiClient {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun parsePendingEmailApproval(
+        json: JSONObject,
+        status: String
+    ): PendingEmailApproval? {
+        if (status != "pending_approval") return null
+
+        val action = json.optJSONObject("pendingAction")
+            ?: throw IOException("The pending email approval response was invalid.")
+        val payload = action.optJSONObject("payload")
+            ?: throw IOException("The pending email content was invalid.")
+        val recipient = payload.optString("to")
+        val subject = payload.optString("subject")
+        val body = payload.optString("body")
+        val token = action.optString("approvalToken")
+        val expiresAt = action.optString("expiresAt")
+
+        if (
+            action.optString("type") != "send_email" ||
+            recipient.isBlank() ||
+            subject.isBlank() ||
+            body.isBlank() ||
+            !Regex("^[A-Za-z0-9_-]{43}$").matches(token) ||
+            expiresAt.isBlank() ||
+            expiresAt == "null"
+        ) {
+            throw IOException("The pending email approval response was invalid.")
+        }
+
+        return PendingEmailApproval(
+            to = recipient,
+            subject = subject,
+            body = body,
+            approvalToken = token,
+            expiresAt = expiresAt
+        )
     }
 
     private fun parseEmailDrafts(toolCalls: JSONArray?): List<EmailDraft> {

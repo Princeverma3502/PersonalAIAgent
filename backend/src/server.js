@@ -323,8 +323,10 @@ app.get("/api/gmail/callback", async (req, res) => {
     }
 });
 
-app.post("/api/actions/approve", (req, res) => {
-    const result = getActionApprovalResponse(req.body);
+app.post("/api/actions/approve", async (req, res) => {
+    const result = await getActionApprovalResponse(req.body, {
+        sendEmail: payload => gmailService.sendEmailViaGmail(payload)
+    });
     return res.status(result.statusCode).json(result.body);
 });
 
