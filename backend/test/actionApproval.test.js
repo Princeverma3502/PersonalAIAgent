@@ -3,6 +3,7 @@ const { test } = require("node:test");
 
 const {
     createPendingEmailApproval,
+    createPendingWebNavigationApproval,
     getActionApprovalResponse
 } = require("../src/agent/actionApproval");
 
@@ -146,4 +147,68 @@ test("form submission and browser actions remain unsupported", async () => {
         assert.equal(result.body.success, false);
         assert.match(result.body.message, /not implemented/i);
     }
+});
+
+test("approved webpage navigation uses the stored URL once and rejects replay", async () => {
+    const pending = createPendingWebNavigationApproval({
+        url: "https://example.com/docs",
+        searchTerm: "agent"
+    });
+    const calls = [];
+    const first = await getActionApprovalResponse({
+        type: "read_public_webpage",
+        approvalToken: pending.approvalToken
+    }, {
+        navigateWebPage: async payload => {
+            calls.push(payload);
+            return {
+                page: {
+                    url: payload.url,
+                    title: "Docs",
+                    text: "Safe extracted text.",
+                    links: []
+                },
+                summary: "A concise summary."
+            };
+        }
+    });
+    const replay = await getActionApprovalResponse({
+        type: "read_public_webpage",
+        approvalToken: pending.approvalToken
+    }, {
+        navigateWebPage: async () => {
+            throw new Error("Replay must not navigate.");
+        }
+    });
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.success, true);
+    assert.equal(first.body.navigated, true);
+    assert.equal(first.body.summary, "A concise summary.");
+    assert.deepEqual(calls, [{
+        url: "https://example.com/docs",
+        searchTerm: "agent"
+    }]);
+    assert.equal(replay.statusCode, 401);
+    assert.deepEqual(calls.length, 1);
+});
+
+test("expired webpage approval never invokes navigation", async () => {
+    const pending = createPendingWebNavigationApproval({
+        url: "https://example.com/"
+    });
+    let calls = 0;
+    const result = await getActionApprovalResponse({
+        type: "read_public_webpage",
+        approvalToken: pending.approvalToken
+    }, {
+        now: Date.parse(pending.expiresAt) + 1,
+        navigateWebPage: async () => {
+            calls += 1;
+        }
+    });
+
+    assert.equal(result.statusCode, 410);
+    assert.equal(result.body.navigated, false);
+    assert.equal(calls, 0);
 });

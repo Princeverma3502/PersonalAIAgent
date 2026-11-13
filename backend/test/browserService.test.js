@@ -106,6 +106,26 @@ test("public webpage retrieval safety and content handling", async t => {
         assert.equal(fetchCount, 1);
     });
 
+    await t.test("does not follow an approved page redirect to another origin", async () => {
+        const adapters = {
+            resolveAddress: async () => ({
+                address: "93.184.216.34",
+                family: 4
+            }),
+            fetchPage: async () => ({
+                redirectLocation: "https://other.example/next"
+            })
+        };
+
+        await assert.rejects(
+            readPublicPage({
+                url: "https://example.com/start",
+                sameOriginOnly: true
+            }, adapters),
+            /must remain on the original site/
+        );
+    });
+
     await t.test("follows safe redirects and returns extracted search matches", async () => {
         const resolvedHosts = [];
         const adapters = {

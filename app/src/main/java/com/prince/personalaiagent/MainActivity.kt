@@ -43,6 +43,7 @@ import com.prince.personalaiagent.data.remote.AgentResponse
 import com.prince.personalaiagent.data.remote.ChatApiClient
 import com.prince.personalaiagent.data.remote.EmailDraft
 import com.prince.personalaiagent.data.remote.PendingEmailApproval
+import com.prince.personalaiagent.data.remote.PendingWebNavigationApproval
 import com.prince.personalaiagent.ui.theme.PersonalAIAgentTheme
 import dev.jeziellago.compose.markdowntext.MarkdownText
 import kotlinx.coroutines.Dispatchers
@@ -141,7 +142,13 @@ fun AgentScreen() {
     var pendingEmailApproval by remember {
         mutableStateOf<PendingEmailApproval?>(null)
     }
+    var pendingWebNavigationApproval by remember {
+        mutableStateOf<PendingWebNavigationApproval?>(null)
+    }
     var isApprovingEmail by remember {
+        mutableStateOf(false)
+    }
+    var isApprovingWebNavigation by remember {
         mutableStateOf(false)
     }
 
@@ -388,6 +395,77 @@ fun AgentScreen() {
             } finally {
                 pendingEmailApproval = null
                 isApprovingEmail = false
+            }
+        }
+    }
+
+    fun approvePendingWebNavigation() {
+        val approval = pendingWebNavigationApproval ?: return
+        if (isApprovingWebNavigation) return
+
+        isApprovingWebNavigation = true
+        coroutineScope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    apiClient.approveSensitiveAction(
+                        type = "read_public_webpage",
+                        approvalToken = approval.approvalToken
+                    )
+                }
+            } catch (error: Exception) {
+                Log.w(
+                    "WebApproval",
+                    "Could not confirm the webpage approval result.",
+                    error
+                )
+                null
+            }
+
+            val messageText = when {
+                result?.success == true -> buildString {
+                    append(result.summary ?: "The webpage was retrieved.")
+                    result.pageText?.let {
+                        append("\n\nExtracted page text:\n")
+                        append(it)
+                    }
+                    if (result.pageMatches.isNotEmpty()) {
+                        append("\n\nMatching passages:\n")
+                        append(result.pageMatches.joinToString("\n"))
+                    }
+                    if (result.pageLinks.isNotEmpty()) {
+                        append("\n\nRelevant links:\n")
+                        append(result.pageLinks.joinToString("\n"))
+                    }
+                }
+                result == null -> "The approved webpage could not be retrieved."
+                else -> "Webpage was not retrieved: ${result.message}"
+            }
+            val actionStatus = if (result?.success == true) "success" else "failed"
+            val resultMessage = ChatMessage(
+                id = nextChatMessageId(messages),
+                text = messageText,
+                isUser = false,
+                toolName = "read_public_webpage",
+                toolStatus = actionStatus,
+                browserUrl = result?.pageUrl ?: approval.url
+            )
+            messages.add(resultMessage)
+
+            try {
+                withContext(Dispatchers.IO) {
+                    conversationRepository.saveMessage(
+                        resultMessage.id,
+                        resultMessage.text,
+                        resultMessage.isUser
+                    )
+                }
+                conversationHistoryError = null
+            } catch (error: Exception) {
+                conversationHistoryError =
+                    "Could not save the webpage result to chat history: ${error.message ?: "storage error"}"
+            } finally {
+                pendingWebNavigationApproval = null
+                isApprovingWebNavigation = false
             }
         }
     }
@@ -677,6 +755,9 @@ fun AgentScreen() {
             result.pendingEmailApproval?.let { approval ->
                 pendingEmailApproval = approval
             }
+            result.pendingWebNavigationApproval?.let { approval ->
+                pendingWebNavigationApproval = approval
+            }
 
             // UPDATE PENDING DELETION STATE
             when (result.toolName) {
@@ -797,6 +878,47 @@ fun AgentScreen() {
                 TextButton(
                     onClick = { pendingEmailApproval = null },
                     enabled = !isApprovingEmail
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    pendingWebNavigationApproval?.let { approval ->
+        AlertDialog(
+            onDismissRequest = {
+                if (!isApprovingWebNavigation) pendingWebNavigationApproval = null
+            },
+            title = { Text("Open this webpage?") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("Destination:")
+                    Text(approval.url)
+                    approval.searchTerm?.let {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Find: $it")
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Approving retrieves the page as read-only text. It will not submit forms, authenticate, or execute page actions.")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { approvePendingWebNavigation() },
+                    enabled = !isApprovingWebNavigation
+                ) {
+                    Text(if (isApprovingWebNavigation) "Opening..." else "Approve and open")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { pendingWebNavigationApproval = null },
+                    enabled = !isApprovingWebNavigation
                 ) {
                     Text("Cancel")
                 }

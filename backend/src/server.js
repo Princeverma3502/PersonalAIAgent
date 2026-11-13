@@ -6,7 +6,11 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
-const { runAgentTurn } = require("./agent/agentService");
+const {
+    runAgentTurn,
+    summarizeApprovedWebPage
+} = require("./agent/agentService");
+const { readPublicPage } = require("./agent/browserService");
 const {
     createScheduledWebpageSummaryExecutor
 } = require("./agent/scheduledWorkflowService");
@@ -325,7 +329,21 @@ app.get("/api/gmail/callback", async (req, res) => {
 
 app.post("/api/actions/approve", async (req, res) => {
     const result = await getActionApprovalResponse(req.body, {
-        sendEmail: payload => gmailService.sendEmailViaGmail(payload)
+        sendEmail: payload => gmailService.sendEmailViaGmail(payload),
+        navigateWebPage: async payload => {
+            const page = await readPublicPage({
+                url: payload.url,
+                ...(payload.searchTerm ? { searchTerm: payload.searchTerm } : {}),
+                includeLinks: true,
+                sameOriginOnly: true
+            });
+            const summary = await summarizeApprovedWebPage(
+                ai,
+                AI_MODELS,
+                page
+            );
+            return { page, summary };
+        }
     });
     return res.status(result.statusCode).json(result.body);
 });

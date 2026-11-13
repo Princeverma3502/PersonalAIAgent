@@ -18,6 +18,7 @@ data class AgentResponse(
     val toolName: String?,
     val emailDrafts: List<EmailDraft> = emptyList(),
     val pendingEmailApproval: PendingEmailApproval? = null,
+    val pendingWebNavigationApproval: PendingWebNavigationApproval? = null,
     val browserUrl: String? = null,
     val requestDurationMs: Long? = null
 )
@@ -30,11 +31,25 @@ data class PendingEmailApproval(
     val expiresAt: String
 )
 
+data class PendingWebNavigationApproval(
+    val url: String,
+    val searchTerm: String?,
+    val approvalToken: String,
+    val expiresAt: String
+)
+
 data class SensitiveActionResult(
     val success: Boolean,
     val sent: Boolean?,
     val outcome: String,
-    val message: String
+    val message: String,
+    val navigated: Boolean? = null,
+    val summary: String? = null,
+    val pageUrl: String? = null,
+    val pageTitle: String? = null,
+    val pageText: String? = null,
+    val pageLinks: List<String> = emptyList(),
+    val pageMatches: List<String> = emptyList()
 )
 
 data class EmailDraft(
@@ -56,24 +71,49 @@ internal fun resolveSensitiveActionResponse(
     success: Boolean,
     sent: Boolean?,
     outcome: String?,
-    message: String?
+    message: String?,
+    actionType: String = "send_email",
+    navigated: Boolean? = null,
+    summary: String? = null,
+    pageUrl: String? = null,
+    pageTitle: String? = null,
+    pageText: String? = null,
+    pageLinks: List<String> = emptyList(),
+    pageMatches: List<String> = emptyList()
 ): SensitiveActionResult {
     val safeMessage = message?.takeIf { it.isNotBlank() && it != "null" }
-    val confirmed = responseCode in 200..299 && success && sent == true
+    val confirmed = responseCode in 200..299 && success &&
+        if (actionType == "read_public_webpage") navigated == true else sent == true
     return SensitiveActionResult(
         success = confirmed,
         sent = sent,
         outcome = outcome?.takeIf { it.isNotBlank() && it != "null" }
-            ?: if (confirmed) "sent" else if (sent == false) "failed" else "unknown",
+            ?: if (confirmed) {
+                if (actionType == "read_public_webpage") "navigated" else "sent"
+            } else if (sent == false || navigated == false) "failed" else "unknown",
         message = safeMessage
-            ?: if (confirmed) "Email sent successfully."
-            else "Gmail did not confirm whether the email was sent."
+            ?: if (confirmed) {
+                if (actionType == "read_public_webpage") "Webpage retrieved successfully."
+                else "Email sent successfully."
+            } else if (actionType == "read_public_webpage") {
+                "The approved webpage could not be retrieved."
+            } else {
+                "Gmail did not confirm whether the email was sent."
+            },
+        navigated = navigated,
+        summary = summary,
+        pageUrl = pageUrl,
+        pageTitle = pageTitle,
+        pageText = pageText,
+        pageLinks = pageLinks,
+        pageMatches = pageMatches
     )
 }
 
 internal fun parseSensitiveActionResponse(
     responseCode: Int,
-    responseText: String
+    responseText: String,
+    actionType: String = "send_email"
 ): SensitiveActionResult {
     val json = try {
         JSONObject(responseText)
@@ -85,12 +125,33 @@ internal fun parseSensitiveActionResponse(
     }
 
     val sent = if (json.isNull("sent")) null else json.optBoolean("sent", false)
+    val navigated = if (json.isNull("navigated")) null
+    else json.optBoolean("navigated", false)
+    val page = json.optJSONObject("page")
+    val links = page?.optJSONArray("links")?.let { values ->
+        (0 until values.length()).mapNotNull { index ->
+            values.optString(index).takeIf { it.isNotBlank() && it != "null" }
+        }
+    } ?: emptyList()
+    val matches = page?.optJSONArray("matches")?.let { values ->
+        (0 until values.length()).mapNotNull { index ->
+            values.optString(index).takeIf { it.isNotBlank() && it != "null" }
+        }
+    } ?: emptyList()
     return resolveSensitiveActionResponse(
         responseCode = responseCode,
         success = json.optBoolean("success", false),
         sent = sent,
         outcome = json.optString("outcome"),
-        message = json.optString("message")
+        message = json.optString("message"),
+        actionType = actionType,
+        navigated = navigated,
+        summary = json.optString("summary").takeIf { it.isNotBlank() && it != "null" },
+        pageUrl = page?.optString("url")?.takeIf { it.isNotBlank() && it != "null" },
+        pageTitle = page?.optString("title")?.takeIf { it.isNotBlank() && it != "null" },
+        pageText = page?.optString("text")?.takeIf { it.isNotBlank() && it != "null" },
+        pageLinks = links,
+        pageMatches = matches
     )
 }
 
@@ -220,7 +281,7 @@ class ChatApiClient {
                     error
                 )
             }
-            return parseSensitiveActionResponse(responseCode, responseText)
+            return parseSensitiveActionResponse(responseCode, responseText, type)
         } finally {
             connection.disconnect()
         }
@@ -332,6 +393,7 @@ class ChatApiClient {
                     ?.takeIf { it.isNotBlank() && it != "null" }
                 ?: "unknown"
             val pendingEmailApproval = parsePendingEmailApproval(json, status)
+            val pendingWebNavigationApproval = parsePendingWebNavigationApproval(json, status)
 
             val agentResponse = AgentResponse(
                 reply = json.optString(
@@ -342,6 +404,7 @@ class ChatApiClient {
                 toolName = toolName,
                 emailDrafts = emailDrafts,
                 pendingEmailApproval = pendingEmailApproval,
+                pendingWebNavigationApproval = pendingWebNavigationApproval,
                 browserUrl = browserUrl,
                 requestDurationMs = SystemClock.elapsedRealtime() - requestStartedAt
             )
@@ -365,6 +428,7 @@ class ChatApiClient {
 
         val action = json.optJSONObject("pendingAction")
             ?: throw IOException("The pending email approval response was invalid.")
+        if (action.optString("type") != "send_email") return null
         val payload = action.optJSONObject("payload")
             ?: throw IOException("The pending email content was invalid.")
         val recipient = payload.optString("to")
@@ -389,6 +453,40 @@ class ChatApiClient {
             to = recipient,
             subject = subject,
             body = body,
+            approvalToken = token,
+            expiresAt = expiresAt
+        )
+    }
+
+    private fun parsePendingWebNavigationApproval(
+        json: JSONObject,
+        status: String
+    ): PendingWebNavigationApproval? {
+        if (status != "pending_approval") return null
+
+        val action = json.optJSONObject("pendingAction")
+            ?: throw IOException("The pending webpage approval response was invalid.")
+        if (action.optString("type") != "read_public_webpage") return null
+        val payload = action.optJSONObject("payload")
+            ?: throw IOException("The pending webpage content was invalid.")
+        val url = payload.optString("url")
+        val searchTerm = payload.optString("searchTerm")
+            .takeIf { it.isNotBlank() && it != "null" }
+        val token = action.optString("approvalToken")
+        val expiresAt = action.optString("expiresAt")
+
+        if (
+            url.isBlank() ||
+            !Regex("^[A-Za-z0-9_-]{43}$").matches(token) ||
+            expiresAt.isBlank() ||
+            expiresAt == "null"
+        ) {
+            throw IOException("The pending webpage approval response was invalid.")
+        }
+
+        return PendingWebNavigationApproval(
+            url = url,
+            searchTerm = searchTerm,
             approvalToken = token,
             expiresAt = expiresAt
         )
